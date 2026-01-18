@@ -94,23 +94,48 @@ class LiteLLMAdapter(ILLMProvider):
         for attempt in range(max_retries):
             try:
                 # Run blocking embedding in executor
+                # Need to capture variables for executor
+                model_name = settings.embedding_model
+                text_input = text
+                
+                def _get_embedding():
+                    from litellm import embedding as litellm_embedding
+                    return litellm_embedding(
+                        model=model_name,
+                        input=[text_input],
+                    )
+                
                 loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: embedding(
-                        model=settings.embedding_model,
-                        input=[text],
-                    ),
-                )
+                response = await loop.run_in_executor(None, _get_embedding)
 
                 # Extract embedding from response
+                # LiteLLM returns EmbeddingResponse object with data attribute
+                if hasattr(response, "data") and isinstance(response.data, list) and len(response.data) > 0:
+                    if isinstance(response.data[0], dict) and "embedding" in response.data[0]:
+                        embedding = response.data[0]["embedding"]
+                        if embedding and len(embedding) > 0:
+                            return embedding
+                    elif isinstance(response.data[0], list):
+                        embedding = response.data[0]
+                        if embedding and len(embedding) > 0:
+                            return embedding
+                
+                # Fallback: try list format (older LiteLLM versions)
                 if isinstance(response, list) and len(response) > 0:
                     if isinstance(response[0], dict) and "embedding" in response[0]:
-                        return response[0]["embedding"]
+                        embedding = response[0]["embedding"]
+                        if embedding and len(embedding) > 0:
+                            return embedding
                     elif isinstance(response[0], list):
-                        return response[0]
-
-                return []
+                        embedding = response[0]
+                        if embedding and len(embedding) > 0:
+                            return embedding
+                
+                # If we get here, the response format is unexpected
+                raise ValueError(
+                    f"Unexpected embedding response format: {type(response)}. "
+                    f"Response: {str(response)[:200]}"
+                )
 
             except Exception as e:
                 if attempt == max_retries - 1:

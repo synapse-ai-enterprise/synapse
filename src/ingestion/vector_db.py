@@ -93,6 +93,10 @@ class LanceDBAdapter(IKnowledgeBase):
             None, self.embedding_fn, query
         )
 
+        # Validate embedding
+        if not query_vector or len(query_vector) == 0:
+            raise ValueError(f"Embedding function returned empty vector for query: {query[:100]}")
+
         # Build search query
         search_query = self.table.search(query_vector).limit(limit)
 
@@ -100,13 +104,21 @@ class LanceDBAdapter(IKnowledgeBase):
         if source:
             search_query = search_query.where(f"source = '{source}'")
 
-        # Execute search
+        # Execute search - convert to list of dicts instead of pandas
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, search_query.to_pandas)
+        arrow_table = await loop.run_in_executor(None, search_query.to_arrow)
+        
+        # Convert Arrow table to list of dicts (avoid pandas dependency)
+        results = []
+        for i in range(arrow_table.num_rows):
+            row_dict = {}
+            for col_name in arrow_table.column_names:
+                row_dict[col_name] = arrow_table[col_name][i].as_py()
+            results.append(row_dict)
 
         # Convert to UASKnowledgeUnit
         knowledge_units = []
-        for _, row in results.iterrows():
+        for row in results:
             unit = UASKnowledgeUnit(
                 id=row["id"],
                 content=row["text"],

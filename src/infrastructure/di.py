@@ -40,9 +40,8 @@ class DIContainer:
         """
         if self._knowledge_base is None:
             self._knowledge_base = LanceDBAdapter(embedding_fn)
-            # Initialize database
-            import asyncio
-            asyncio.run(self._knowledge_base.initialize_db())
+            # Note: initialize_db() must be awaited by the caller
+            # Cannot use asyncio.run() here as it may be called from async context
         return self._knowledge_base
 
     def get_llm_provider(self) -> ILLMProvider:

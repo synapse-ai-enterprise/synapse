@@ -42,8 +42,14 @@ class LinearEgressAdapter(IIssueTracker):
             CoreArtifact representation of the issue.
 
         Raises:
-            ValueError: If API call fails.
+            ValueError: If API call fails or API key is missing.
         """
+        if not self.api_key:
+            raise ValueError(
+                "LINEAR_API_KEY not configured. "
+                "Set LINEAR_API_KEY in .env or use MockIssueTracker for demos."
+            )
+
         await self.rate_limiter.acquire()
 
         query = """
@@ -79,7 +85,11 @@ class LinearEgressAdapter(IIssueTracker):
                 headers=self.headers,
             ) as response:
                 if response.status != 200:
-                    raise ValueError(f"Linear API error: {response.status}")
+                    error_text = await response.text()
+                    raise ValueError(
+                        f"Linear API error: {response.status}. "
+                        f"Response: {error_text[:200]}"
+                    )
 
                 data = await response.json()
                 if "errors" in data:

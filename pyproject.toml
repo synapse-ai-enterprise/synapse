@@ -37,6 +37,7 @@ sentence-transformers = {version = "^2.3.0", optional = true}
 # Web Framework (for webhooks)
 fastapi = "^0.109.0"
 uvicorn = {extras = ["standard"], version = "^0.27.0"}
+click = "^8.1.0"
 
 [tool.poetry.extras]
 local-embeddings = ["sentence-transformers"]

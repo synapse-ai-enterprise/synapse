@@ -59,7 +59,10 @@ class OptimizeArtifactUseCase:
             }
 
         except Exception as e:
-            return {
+            import traceback
+            error_details = {
                 "success": False,
                 "error": str(e),
+                "traceback": traceback.format_exc(),
             }
+            return error_details

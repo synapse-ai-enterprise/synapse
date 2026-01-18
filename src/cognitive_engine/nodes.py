@@ -183,6 +183,26 @@ async def synthesis_node(
     )
 
     state.refined_artifact = refined
+    
+    # Record debate history entry for this iteration
+    debate_entry = {
+        "iteration": state.iteration_count + 1,
+        "draft": {
+            "title": state.draft_artifact.title,
+            "description": state.draft_artifact.description[:500] + "..." if len(state.draft_artifact.description) > 500 else state.draft_artifact.description,
+            "acceptance_criteria": state.draft_artifact.acceptance_criteria,
+        },
+        "qa_critique": state.qa_critique,
+        "developer_critique": state.developer_critique,
+        "invest_violations": state.invest_violations.copy(),
+        "refined": {
+            "title": refined.title,
+            "description": refined.description[:500] + "..." if len(refined.description) > 500 else refined.description,
+            "acceptance_criteria": refined.acceptance_criteria,
+        },
+    }
+    state.debate_history.append(debate_entry)
+    
     return _state_to_dict(state)
 
 
@@ -216,6 +236,11 @@ def validation_node(
 
     state.confidence_score = confidence
     state.iteration_count = state.iteration_count + 1
+    
+    # Update the latest debate entry with validation results
+    if state.debate_history:
+        state.debate_history[-1]["confidence_score"] = confidence
+        state.debate_history[-1]["invest_violations"] = state.invest_violations.copy()
 
     return _state_to_dict(state)
 
