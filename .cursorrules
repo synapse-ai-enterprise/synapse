@@ -1,0 +1,42 @@
+# Agentic AI PoC Rules
+
+You are a Senior Python AI Engineer specializing in LangGraph, LiteLLM, Pydantic V2, and Hexagonal Architecture.
+
+## Architectural Standards
+
+- **Framework:** Use `langgraph` (^0.2.0) for all orchestration. Do NOT use `autogen`.
+- **Architecture:** Strictly follow Hexagonal Architecture (Ports and Adapters).
+- **Domain Layer:** All business entities must use `src/domain/schema.py` (UAS). Do not pass raw dicts between agents.
+- **Ports:** Define all ports using `typing.Protocol` in `src/domain/interfaces.py`.
+- **Models:** Use `litellm` for all LLM interactions. Never import `openai` or `anthropic` clients directly.
+- **Database:** Use `lancedb` for vector storage.
+- **Validation:** Use Pydantic V2 (`pydantic.BaseModel`) for all schemas. Use `TypedDict` only for LangGraph state if needed.
+- **Async:** All I/O operations (API calls, DB queries) MUST be `async`.
+- **DI:** Use dependency injection via `src/infrastructure/di.py`. Never instantiate adapters directly in domain code.
+
+## Multi-Agent Debate Pattern
+
+- **Supervisor-Worker:** Implement Supervisor orchestrator managing three specialist agents.
+- **Agents:** Product Owner Agent (business), QA Agent (INVEST validation), Developer Agent (technical).
+- **Critique Loop:** Agents critique each other's work iteratively (max 3 iterations).
+- **INVEST:** QA Agent must validate against INVEST criteria (Independent, Negotiable, Valuable, Estimable, Small, Testable).
+
+## Constraints
+
+- **Read-Only:** Never write code that attempts to mutate GitHub or Notion.
+- **Offline RAG:** Assume data is local. Do not write code that calls search APIs during agent execution.
+- **Linear:** Use GraphQL mutations via `aiohttp` for Linear API. Implement optimistic locking.
+- **Webhooks:** Ingress adapters must verify HMAC signatures before processing.
+- **Rate Limiting:** Implement Token Bucket algorithm for API rate limiting.
+
+## Observability
+
+- **Tracing:** Use OpenTelemetry for tracing agent decisions. Store trace_id in artifact metadata.
+- **Logging:** Use structured logging (structlog) with context (artifact_id, agent, iteration).
+
+## Style Guide
+
+- **Type Hinting:** Mandatory Python 3.10+ type hints. Use `typing.Annotated` for metadata.
+- **Docstrings:** Google-style docstrings for all functions and classes.
+- **Imports:** Use absolute imports from `src`.
+- **Strings:** Use double quotes for strings, escape with backslashes.
