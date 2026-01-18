@@ -186,7 +186,7 @@ async def synthesis_node(
     return _state_to_dict(state)
 
 
-async def validation_node(
+def validation_node(
     state_dict: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Validation node: Check confidence and INVEST violations.

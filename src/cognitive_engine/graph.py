@@ -46,15 +46,36 @@ def create_cognitive_graph(
     # Create graph with dict state (LangGraph works with dicts)
     graph = StateGraph(dict)
 
-    # Add nodes with proper state conversion
-    graph.add_node("ingress", lambda state: ingress_node(state, issue_tracker))
-    graph.add_node("context_assembly", lambda state: context_assembly_node(state, knowledge_base))
-    graph.add_node("drafting", lambda state: drafting_node(state, po_agent))
-    graph.add_node("qa_critique", lambda state: qa_critique_node(state, qa_agent, invest_validator))
-    graph.add_node("developer_critique", lambda state: developer_critique_node(state, developer_agent))
-    graph.add_node("synthesis", lambda state: synthesis_node(state, po_agent))
+    # Add nodes with proper state conversion (async nodes need proper wrapping)
+    async def ingress_wrapper(state):
+        return await ingress_node(state, issue_tracker)
+    
+    async def context_assembly_wrapper(state):
+        return await context_assembly_node(state, knowledge_base)
+    
+    async def drafting_wrapper(state):
+        return await drafting_node(state, po_agent)
+    
+    async def qa_critique_wrapper(state):
+        return await qa_critique_node(state, qa_agent, invest_validator)
+    
+    async def developer_critique_wrapper(state):
+        return await developer_critique_node(state, developer_agent)
+    
+    async def synthesis_wrapper(state):
+        return await synthesis_node(state, po_agent)
+    
+    async def execution_wrapper(state):
+        return await execution_node(state, issue_tracker)
+    
+    graph.add_node("ingress", ingress_wrapper)
+    graph.add_node("context_assembly", context_assembly_wrapper)
+    graph.add_node("drafting", drafting_wrapper)
+    graph.add_node("qa_critique", qa_critique_wrapper)
+    graph.add_node("developer_critique", developer_critique_wrapper)
+    graph.add_node("synthesis", synthesis_wrapper)
     graph.add_node("validation", validation_node)
-    graph.add_node("execution", lambda state: execution_node(state, issue_tracker))
+    graph.add_node("execution", execution_wrapper)
 
     # Add edges
     graph.set_entry_point("ingress")

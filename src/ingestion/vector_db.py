@@ -5,7 +5,10 @@ from datetime import datetime
 from typing import Callable, List, Literal, Optional
 
 import lancedb
-from lancedb import Table
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lancedb.table import Table
 
 from src.config import settings
 from src.domain.interfaces import IKnowledgeBase
@@ -23,7 +26,7 @@ class LanceDBAdapter(IKnowledgeBase):
         """
         self.embedding_fn = embedding_fn
         self.db: Optional[lancedb.DBConnection] = None
-        self.table: Optional[Table] = None
+        self.table: Optional["Table"] = None
         self._initialized = False
 
     async def initialize_db(self) -> None:

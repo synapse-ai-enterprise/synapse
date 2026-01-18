@@ -1,7 +1,7 @@
 """OpenTelemetry tracing setup."""
 
 from opentelemetry import trace
-from opentelemetry.exporter.console import ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 

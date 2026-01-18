@@ -165,7 +165,9 @@ Return the refined artifact.""",
         lines = text.split("\n")
         for line in lines:
             line = line.strip()
-            if line.startswith("- ") or line.startswith("* ") or (line[0].isdigit() and ". " in line[:3]):
+            if not line:
+                continue
+            if line.startswith("- ") or line.startswith("* ") or (len(line) > 0 and line[0].isdigit() and ". " in line[:3]):
                 criteria.append(line.lstrip("- *").lstrip("0123456789. "))
 
         return criteria if criteria else ["Acceptance criteria to be defined"]
