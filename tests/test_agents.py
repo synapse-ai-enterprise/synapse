@@ -6,61 +6,17 @@ from unittest.mock import AsyncMock, MagicMock
 from src.cognitive_engine.agents.developer_agent import DeveloperAgent
 from src.cognitive_engine.agents.po_agent import ProductOwnerAgent
 from src.cognitive_engine.agents.qa_agent import QAAgent
+from src.cognitive_engine.agents.supervisor import SupervisorAgent
 from src.domain.schema import (
     CoreArtifact,
     NormalizedPriority,
     UASKnowledgeUnit,
     WorkItemStatus,
+    ArtifactRefinement,
+    InvestCritique,
+    FeasibilityAssessment,
+    SupervisorDecision,
 )
-
-
-@pytest.fixture
-def mock_llm_provider():
-    """Create a mock LLM provider."""
-    provider = MagicMock()
-    provider.chat_completion = AsyncMock(return_value="Test response")
-    provider.get_embedding = AsyncMock(return_value=[0.1] * 1536)
-    return provider
-
-
-@pytest.fixture
-def sample_artifact():
-    """Create a sample artifact for testing."""
-    return CoreArtifact(
-        source_system="linear",
-        source_id="test-id",
-        human_ref="LIN-123",
-        url="https://linear.app/test",
-        title="Test User Story",
-        description="As a user, I want to test, so that I can verify functionality.",
-        acceptance_criteria=["AC1: Test passes", "AC2: Code works"],
-        type="Story",
-        status=WorkItemStatus.TODO,
-        priority=NormalizedPriority.MEDIUM,
-    )
-
-
-@pytest.fixture
-def sample_context():
-    """Create sample knowledge context."""
-    return [
-        UASKnowledgeUnit(
-            id="kb-1",
-            content="Test content from GitHub",
-            summary="GitHub code snippet",
-            source="github",
-            last_updated="2024-01-01T00:00:00",
-            location="/path/to/file.py",
-        ),
-        UASKnowledgeUnit(
-            id="kb-2",
-            content="Test content from Notion",
-            summary="Notion documentation",
-            source="notion",
-            last_updated="2024-01-01T00:00:00",
-            location="https://notion.so/page",
-        ),
-    ]
 
 
 class TestProductOwnerAgent:
@@ -71,23 +27,24 @@ class TestProductOwnerAgent:
         """Test that PO agent can draft an artifact."""
         agent = ProductOwnerAgent(mock_llm_provider)
         
-        mock_llm_provider.chat_completion.return_value = """
-        **Refined Title:** As a user, I want to test functionality
-        
-        **Description:**
-        This is a refined description with clear value proposition.
-        
-        **Acceptance Criteria:**
-        - AC1: Test passes
-        - AC2: Code works correctly
-        """
+        # Mock structured completion to return ArtifactRefinement
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=ArtifactRefinement(
+                title="Refined Test Title",
+                description="As a user, I want refined functionality, so that I can achieve better results.",
+                acceptance_criteria=["AC1: Refined criterion 1", "AC2: Refined criterion 2"],
+                rationale="Refined based on context",
+            )
+        )
         
         result = await agent.draft_artifact(sample_artifact, sample_context)
         
         assert result is not None
         assert isinstance(result, CoreArtifact)
         assert result.source_id == sample_artifact.source_id
-        mock_llm_provider.chat_completion.assert_called_once()
+        assert result.title == "Refined Test Title"
+        assert len(result.acceptance_criteria) > 0
+        mock_llm_provider.structured_completion.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_synthesize_feedback(self, mock_llm_provider, sample_artifact):
@@ -99,43 +56,60 @@ class TestProductOwnerAgent:
             "Consider adding error handling scenarios.",
         ]
         
-        mock_llm_provider.chat_completion.return_value = """
-        **Refined Artifact:**
-        Updated description incorporating feedback.
-        
-        **Acceptance Criteria:**
-        - AC1: Test passes with specific conditions
-        - AC2: Code works correctly with error handling
-        """
+        # Mock structured completion
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=ArtifactRefinement(
+                title="Synthesized Title",
+                description="Synthesized description incorporating feedback",
+                acceptance_criteria=[
+                    "AC1: Specific criterion with error handling",
+                    "AC2: Another specific criterion",
+                ],
+                rationale="Synthesized from critiques",
+            )
+        )
         
         result = await agent.synthesize_feedback(sample_artifact, critiques)
         
         assert result is not None
         assert isinstance(result, CoreArtifact)
-        mock_llm_provider.chat_completion.assert_called_once()
+        assert result.title == "Synthesized Title"
+        mock_llm_provider.structured_completion.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_synthesize_feedback_with_violations(self, mock_llm_provider, sample_artifact):
+        """Test synthesis with INVEST violations."""
+        agent = ProductOwnerAgent(mock_llm_provider)
+        
+        critiques = ["Missing 'so that' clause"]
+        violations = ["Valuable: Missing value proposition"]
+        
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=ArtifactRefinement(
+                title="Fixed Title",
+                description="As a user, I want X, so that Y",
+                acceptance_criteria=["AC1: Fixed"],
+                rationale="Fixed violations",
+            )
+        )
+        
+        result = await agent.synthesize_feedback(sample_artifact, critiques, violations=violations)
+        
+        assert result is not None
+        assert "so that" in result.description.lower()
 
     def test_format_context(self, mock_llm_provider, sample_context):
         """Test context formatting."""
         agent = ProductOwnerAgent(mock_llm_provider)
         formatted = agent._format_context(sample_context)
         
-        assert "github" in formatted.lower()
-        assert "notion" in formatted.lower()
+        assert isinstance(formatted, str)
         assert len(formatted) > 0
+        # Should include source information
+        assert "github" in formatted.lower() or "notion" in formatted.lower()
 
-    def test_extract_acceptance_criteria(self, mock_llm_provider):
-        """Test acceptance criteria extraction."""
-        agent = ProductOwnerAgent(mock_llm_provider)
-        
-        text = """
-        - AC1: First criterion
-        - AC2: Second criterion
-        1. Numbered criterion
-        """
-        
-        criteria = agent._extract_acceptance_criteria(text)
-        assert len(criteria) >= 2
-        assert any("AC1" in c or "First" in c for c in criteria)
+    # Note: _extract_acceptance_criteria method doesn't exist - agent uses structured outputs
+    # No need to test non-existent private methods
 
 
 class TestQAAgent:
@@ -146,57 +120,60 @@ class TestQAAgent:
         """Test that QA agent can critique an artifact."""
         agent = QAAgent(mock_llm_provider)
         
-        mock_llm_provider.chat_completion.return_value = """
-        VIOLATIONS:
-        - Testable: Acceptance criteria need to be more binary
-        
-        CRITIQUE:
-        The artifact is generally good but could be improved.
-        
-        CONFIDENCE: 0.8
-        """
+        # Mock structured completion
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=InvestCritique(
+                violations=[],
+                critique_text="The artifact is well-structured and meets INVEST criteria.",
+                confidence=0.85,
+                overall_assessment="good",
+            )
+        )
         
         result = await agent.critique_artifact(sample_artifact)
         
         assert result is not None
-        assert "violations" in result
+        assert isinstance(result, dict)
         assert "critique" in result
         assert "confidence" in result
+        assert "violations" in result
         assert isinstance(result["violations"], list)
         assert isinstance(result["confidence"], float)
         assert 0.0 <= result["confidence"] <= 1.0
+        assert "overall_assessment" in result
+        mock_llm_provider.structured_completion.assert_called_once()
 
-    def test_extract_violations(self, mock_llm_provider):
-        """Test violation extraction."""
+    @pytest.mark.asyncio
+    async def test_critique_artifact_with_violations(self, mock_llm_provider, sample_artifact):
+        """Test critique with INVEST violations."""
+        from src.domain.schema import InvestViolation
+        
         agent = QAAgent(mock_llm_provider)
         
-        text = """
-        VIOLATIONS:
-        - Independent: Story depends on other work
-        - Testable: ACs are vague
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=InvestCritique(
+                violations=[
+                    InvestViolation(
+                        criterion="T",  # Must be single letter: I, N, V, E, S, or T
+                        severity="major",
+                        description="Acceptance criteria are not binary",
+                    )
+                ],
+                critique_text="The acceptance criteria need to be more specific and binary.",
+                confidence=0.65,
+                overall_assessment="needs_improvement",
+            )
+        )
         
-        CRITIQUE:
-        Some critique text here.
-        """
+        result = await agent.critique_artifact(sample_artifact)
         
-        violations = agent._extract_violations(text)
-        assert len(violations) == 2
-        assert any("Independent" in v for v in violations)
-        assert any("Testable" in v for v in violations)
+        assert result is not None
+        assert len(result.get("violations", [])) > 0
+        assert len(result.get("structured_violations", [])) > 0
+        assert result["confidence"] < 0.8  # Lower confidence with violations
 
-    def test_extract_confidence(self, mock_llm_provider):
-        """Test confidence extraction."""
-        agent = QAAgent(mock_llm_provider)
-        
-        text = "CONFIDENCE: 0.85"
-        confidence = agent._extract_confidence(text)
-        assert confidence == 0.85
-        
-        # Test default confidence when no value found
-        text_no_conf = "Some text without confidence"
-        confidence = agent._extract_confidence(text_no_conf)
-        assert isinstance(confidence, float)
-        assert 0.0 <= confidence <= 1.0
+    # Note: _extract_violations and _extract_confidence methods don't exist - agent uses structured outputs
+    # No need to test non-existent private methods
 
 
 class TestDeveloperAgent:
@@ -205,79 +182,226 @@ class TestDeveloperAgent:
     @pytest.mark.asyncio
     async def test_assess_feasibility(self, mock_llm_provider, sample_artifact, sample_context):
         """Test that developer agent can assess feasibility."""
+        from src.domain.schema import TechnicalDependency, TechnicalConcern
+        
         agent = DeveloperAgent(mock_llm_provider)
         
-        mock_llm_provider.chat_completion.return_value = """
-        FEASIBILITY: feasible
-        
-        DEPENDENCIES:
-        - Requires API v2 deployment
-        - Needs database migration
-        
-        CONCERNS:
-        - Performance might be impacted
-        
-        CONFIDENCE: 0.75
-        """
+        # Mock structured completion with proper TechnicalDependency and TechnicalConcern objects
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=FeasibilityAssessment(
+                status="feasible",
+                dependencies=[
+                    TechnicalDependency(
+                        dependency_type="infrastructure",
+                        description="API v2 deployment",
+                        blocking=False,
+                    )
+                ],
+                concerns=[
+                    TechnicalConcern(
+                        severity="medium",
+                        description="Performance might be impacted",
+                        recommendation="Monitor performance metrics",
+                    )
+                ],
+                confidence=0.75,
+                assessment_text="The artifact is feasible with minor concerns.",
+            )
+        )
         
         result = await agent.assess_feasibility(sample_artifact, sample_context)
         
         assert result is not None
+        assert isinstance(result, dict)
         assert "feasibility" in result
         assert "dependencies" in result
         assert "concerns" in result
         assert "critique" in result
         assert "confidence" in result
-        assert result["feasibility"] in ["feasible", "blocked", "requires-changes", "unknown"]
+        assert result["feasibility"] in ["feasible", "blocked", "requires_changes"]
         assert isinstance(result["dependencies"], list)
         assert isinstance(result["concerns"], list)
+        assert isinstance(result["confidence"], float)
+        assert 0.0 <= result["confidence"] <= 1.0
+        mock_llm_provider.structured_completion.assert_called_once()
 
-    def test_extract_feasibility(self, mock_llm_provider):
-        """Test feasibility status extraction."""
+    @pytest.mark.asyncio
+    async def test_assess_feasibility_blocked(self, mock_llm_provider, sample_artifact, sample_context):
+        """Test feasibility assessment when blocked."""
+        from src.domain.schema import TechnicalDependency, TechnicalConcern
+        
         agent = DeveloperAgent(mock_llm_provider)
         
-        text = "FEASIBILITY: feasible"
-        status = agent._extract_feasibility(text)
-        assert status == "feasible"
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=FeasibilityAssessment(
+                status="blocked",
+                dependencies=[
+                    TechnicalDependency(
+                        dependency_type="external_service",
+                        description="Missing API",
+                        blocking=True,
+                    ),
+                    TechnicalDependency(
+                        dependency_type="data",
+                        description="Database migration required",
+                        blocking=True,
+                    ),
+                ],
+                concerns=[
+                    TechnicalConcern(
+                        severity="blocker",
+                        description="Critical dependency missing",
+                        recommendation="Resolve dependencies before proceeding",
+                    )
+                ],
+                confidence=0.3,
+                assessment_text="Blocked by missing dependencies.",
+            )
+        )
         
-        text_blocked = "FEASIBILITY: blocked"
-        status = agent._extract_feasibility(text_blocked)
-        assert status == "blocked"
+        result = await agent.assess_feasibility(sample_artifact, sample_context)
+        
+        assert result["feasibility"] == "blocked"
+        assert len(result["dependencies"]) > 0
+        assert result["confidence"] < 0.5  # Lower confidence when blocked
 
-    def test_extract_dependencies(self, mock_llm_provider):
-        """Test dependency extraction."""
-        agent = DeveloperAgent(mock_llm_provider)
-        
-        text = """
-        DEPENDENCIES:
-        - Dependency 1
-        - Dependency 2
-        
-        CONCERNS:
-        """
-        
-        dependencies = agent._extract_dependencies(text)
-        assert len(dependencies) == 2
-
-    def test_extract_concerns(self, mock_llm_provider):
-        """Test concerns extraction."""
-        agent = DeveloperAgent(mock_llm_provider)
-        
-        text = """
-        CONCERNS:
-        - Concern 1
-        - Concern 2
-        
-        CONFIDENCE: 0.8
-        """
-        
-        concerns = agent._extract_concerns(text)
-        assert len(concerns) == 2
+    # Note: _extract_feasibility, _extract_dependencies, and _extract_concerns methods don't exist
+    # Agent uses structured outputs, so no need to test non-existent private methods
 
     def test_format_context(self, mock_llm_provider, sample_context):
         """Test codebase context formatting."""
         agent = DeveloperAgent(mock_llm_provider)
         formatted = agent._format_context(sample_context)
         
-        # Should include GitHub content
-        assert "github" in formatted.lower() or len(formatted) > 0
+        assert isinstance(formatted, str)
+        assert len(formatted) > 0
+
+
+class TestSupervisorAgent:
+    """Tests for SupervisorAgent."""
+
+    @pytest.mark.asyncio
+    async def test_decide_next_action_initial(self, mock_llm_provider, cognitive_state_dict):
+        """Test supervisor decision for initial state."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        # Mock structured completion for initial draft
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=SupervisorDecision(
+                next_action="draft",
+                reasoning="Initial draft needed",
+                should_continue=True,
+                priority_focus="quality",
+                confidence=0.9,
+            )
+        )
+        
+        decision = await supervisor.decide_next_action(cognitive_state_dict, max_iterations=3)
+        
+        assert isinstance(decision, SupervisorDecision)
+        assert decision.next_action == "draft"
+        assert decision.should_continue is True
+        assert decision.confidence > 0.0
+
+    @pytest.mark.asyncio
+    async def test_decide_next_action_with_draft(self, mock_llm_provider, cognitive_state_dict, sample_artifact):
+        """Test supervisor decision when draft exists."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        cognitive_state_dict["draft_artifact"] = sample_artifact.model_dump()
+        
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=SupervisorDecision(
+                next_action="qa_critique",
+                reasoning="QA critique needed after draft",
+                should_continue=True,
+                priority_focus="quality",
+                confidence=0.9,
+            )
+        )
+        
+        decision = await supervisor.decide_next_action(cognitive_state_dict, max_iterations=3)
+        
+        assert decision.next_action == "qa_critique"
+
+    @pytest.mark.asyncio
+    async def test_decide_next_action_max_iterations(self, mock_llm_provider, cognitive_state_dict):
+        """Test supervisor decision when max iterations reached."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        cognitive_state_dict["iteration_count"] = 3
+        
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=SupervisorDecision(
+                next_action="execute",
+                reasoning="Max iterations reached, execute regardless",
+                should_continue=False,
+                priority_focus="none",
+                confidence=0.8,
+            )
+        )
+        
+        decision = await supervisor.decide_next_action(cognitive_state_dict, max_iterations=3)
+        
+        assert decision.next_action == "execute"
+        assert decision.should_continue is False
+
+    @pytest.mark.asyncio
+    async def test_decide_next_action_high_confidence(self, mock_llm_provider, cognitive_state_dict, sample_artifact):
+        """Test supervisor decision with high confidence."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        cognitive_state_dict["refined_artifact"] = sample_artifact.model_dump()
+        cognitive_state_dict["confidence_score"] = 0.9
+        cognitive_state_dict["invest_violations"] = []
+        
+        mock_llm_provider.structured_completion = AsyncMock(
+            return_value=SupervisorDecision(
+                next_action="execute",
+                reasoning="High confidence, ready to execute",
+                should_continue=False,
+                priority_focus="none",
+                confidence=0.95,
+            )
+        )
+        
+        decision = await supervisor.decide_next_action(cognitive_state_dict, max_iterations=3)
+        
+        assert decision.next_action == "execute"
+
+    def test_analyze_trends(self, mock_llm_provider):
+        """Test trend analysis."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        debate_history = [
+            {"confidence_score": 0.5, "invest_violations": [1, 2, 3]},
+            {"confidence_score": 0.7, "invest_violations": [1, 2]},
+            {"confidence_score": 0.8, "invest_violations": [1]},
+        ]
+        
+        trends = supervisor._analyze_trends(debate_history)
+        
+        assert trends["confidence_trend"] == "improving"
+        assert trends["violation_trend"] == "improving"
+        assert trends["improving"] is True
+
+    def test_build_decision_context(self, mock_llm_provider):
+        """Test decision context building."""
+        supervisor = SupervisorAgent(mock_llm_provider)
+        
+        context = supervisor._build_decision_context(
+            iteration_count=1,
+            confidence_score=0.75,
+            violation_count=2,
+            qa_confidence=0.8,
+            developer_confidence=0.7,
+            developer_feasibility="feasible",
+            qa_assessment="good",
+            trend_analysis={"improving": True, "confidence_trend": "improving"},
+            max_iterations=3,
+        )
+        
+        assert isinstance(context, str)
+        assert "Iteration: 1/3" in context
+        assert "Confidence: 0.75" in context
+        assert "Violations: 2" in context

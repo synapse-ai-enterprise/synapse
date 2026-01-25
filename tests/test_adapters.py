@@ -66,6 +66,18 @@ class TestLinearEgressAdapter:
             assert result.title == "Test Issue"
 
     @pytest.mark.asyncio
+    async def test_get_issue_error(self, adapter):
+        """Test error handling when fetching issue fails."""
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            mock_response = AsyncMock()
+            mock_response.status = 404
+            mock_response.json = AsyncMock(return_value={"errors": [{"message": "Not found"}]})
+            mock_post.return_value.__aenter__.return_value = mock_response
+            
+            with pytest.raises(Exception):  # Should raise an error
+                await adapter.get_issue("nonexistent-id")
+
+    @pytest.mark.asyncio
     async def test_update_issue_dry_run(self):
         """Test update in dry run mode."""
         with patch("src.adapters.egress.linear_egress.settings") as mock_settings:
@@ -338,6 +350,28 @@ class TestLiteLLMAdapter:
             
             assert result == "Success"
             assert call_count >= 2  # Should retry
+
+    @pytest.mark.asyncio
+    async def test_chat_completion_max_retries(self, adapter):
+        """Test that max retries are respected."""
+        call_count = 0
+        
+        async def mock_executor_run(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise Exception("Persistent failure")
+        
+        with patch("asyncio.get_event_loop") as mock_loop:
+            mock_executor = MagicMock()
+            mock_executor.run_in_executor = mock_executor_run
+            mock_loop.return_value = mock_executor
+            
+            messages = [{"role": "user", "content": "Test"}]
+            with pytest.raises(Exception):
+                await adapter.chat_completion(messages)
+            
+            # Should have retried up to max attempts
+            assert call_count > 1
 
 
 class TestTokenBucket:

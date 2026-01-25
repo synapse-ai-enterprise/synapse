@@ -20,12 +20,23 @@ class LiteLLMAdapter(ILLMProvider):
 
         Args:
             model: Model name (defaults to config setting).
+            
+        Note:
+            LiteLLM automatically detects providers from model name prefixes:
+            - OpenAI: gpt-4, gpt-3.5-turbo (uses OPENAI_API_KEY env var)
+            - Anthropic: claude-3-opus, claude-3-sonnet (uses ANTHROPIC_API_KEY env var)
+            - Google: gemini/gemini-pro (uses GEMINI_API_KEY env var)
+            - Azure: azure/gpt-4 (uses AZURE_API_KEY, AZURE_API_BASE env vars)
+            - Ollama: ollama/llama3 (uses api_base parameter)
+            - And many more...
+            
+            Just set the appropriate API key in environment variables and change the model name!
         """
         self.model = model or settings.litellm_model
-
-        # Configure LiteLLM
-        if settings.openai_api_key:
-            litellm.api_key = settings.openai_api_key
+        
+        # LiteLLM automatically reads API keys from environment variables:
+        # OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, AZURE_API_KEY, etc.
+        # No manual configuration needed for most providers!
 
     async def chat_completion(
         self,
@@ -52,15 +63,24 @@ class LiteLLMAdapter(ILLMProvider):
 
         for attempt in range(max_retries):
             try:
+                # Prepare completion kwargs
+                # LiteLLM auto-detects provider from model name prefix
+                completion_kwargs = {
+                    "model": model_name,
+                    "messages": messages,
+                    "temperature": temperature,
+                }
+                
+                # Special handling only for providers that need custom base URLs
+                # (Most providers use environment variables automatically)
+                if model_name.startswith("ollama/"):
+                    completion_kwargs["api_base"] = settings.ollama_base_url
+                
                 # Run blocking completion in executor
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
                     None,
-                    lambda: completion(
-                        model=model_name,
-                        messages=messages,
-                        temperature=temperature,
-                    ),
+                    lambda: completion(**completion_kwargs),
                 )
 
                 # Extract content from response
@@ -114,21 +134,25 @@ class LiteLLMAdapter(ILLMProvider):
         }
         
         # Add instruction to response format for OpenAI-compatible models
-        # For other models, we'll parse JSON from response
+        # For other models (including Ollama), we'll parse JSON from response
         use_json_mode = model_name and (
-            "gpt-4" in model_name.lower() 
-            or "gpt-3.5" in model_name.lower()
-            or "o1" in model_name.lower()
+            ("gpt-4" in model_name.lower() or "gpt-3.5" in model_name.lower() or "o1" in model_name.lower())
+            and not model_name.startswith("ollama/")
         )
 
         for attempt in range(max_retries):
             try:
                 # Prepare completion parameters
+                # LiteLLM auto-detects provider from model name prefix
                 completion_kwargs = {
                     "model": model_name,
                     "messages": messages,
                     "temperature": temperature,
                 }
+                
+                # Special handling only for providers that need custom base URLs
+                if model_name.startswith("ollama/"):
+                    completion_kwargs["api_base"] = settings.ollama_base_url
                 
                 # Use response_format for OpenAI models (JSON mode)
                 if use_json_mode:
@@ -404,10 +428,39 @@ Return ONLY the data values, not the schema definition.
                 
                 def _get_embedding():
                     from litellm import embedding as litellm_embedding
-                    return litellm_embedding(
-                        model=model_name,
-                        input=[text_input],
-                    )
+                    
+                    # Handle local sentence-transformers models
+                    if model_name.startswith("local/") or model_name.startswith("sentence-transformers/"):
+                        # Extract model name (remove prefix)
+                        local_model_name = model_name.split("/", 1)[-1]
+                        try:
+                            from sentence_transformers import SentenceTransformer
+                            # Load model (cached after first load)
+                            model = SentenceTransformer(local_model_name)
+                            # Generate embedding
+                            embedding = model.encode(text_input, convert_to_numpy=True).tolist()
+                            # Return in LiteLLM-compatible format
+                            class MockResponse:
+                                def __init__(self, embedding):
+                                    self.data = [{"embedding": embedding}]
+                            return MockResponse(embedding)
+                        except ImportError:
+                            raise ImportError(
+                                "sentence-transformers is required for local embeddings. "
+                                "Install it with: poetry install --extras local-embeddings"
+                            )
+                    
+                    # Prepare embedding kwargs for LiteLLM
+                    embedding_kwargs = {
+                        "model": model_name,
+                        "input": [text_input],
+                    }
+                    
+                    # Set api_base for Ollama embedding models
+                    if model_name.startswith("ollama/"):
+                        embedding_kwargs["api_base"] = settings.ollama_base_url
+                    
+                    return litellm_embedding(**embedding_kwargs)
                 
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(None, _get_embedding)

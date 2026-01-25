@@ -10,9 +10,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Model Configuration
+    # LiteLLM supports many providers - just change the model name!
+    # Examples:
+    #   - OpenAI: gpt-4, gpt-3.5-turbo (set OPENAI_API_KEY env var)
+    #   - Anthropic: claude-3-opus, claude-3-sonnet (set ANTHROPIC_API_KEY env var)
+    #   - Google: gemini/gemini-pro (set GEMINI_API_KEY env var)
+    #   - Azure: azure/gpt-4 (set AZURE_API_KEY, AZURE_API_BASE env vars)
+    #   - Ollama: ollama/llama3 (set ollama_base_url config)
+    #   - And many more: https://docs.litellm.ai/docs/providers
     litellm_model: str = "gpt-4-turbo-preview"
-    openai_api_key: str = ""
-    ollama_base_url: str = "http://localhost:11434"
+    
+    # Legacy: kept for backward compatibility, but LiteLLM reads from env vars automatically
+    openai_api_key: str = ""  # Prefer OPENAI_API_KEY env var
+    ollama_base_url: str = "http://127.0.0.1:11434"  # Only needed for Ollama
 
     # Integrations
     linear_api_key: str = ""
@@ -51,7 +61,13 @@ class Settings(BaseSettings):
 
     # Vector Store
     vector_store_path: str = "./data/lancedb"
-    embedding_model: str = "text-embedding-3-small"
+    # Embedding model - LiteLLM supports many providers:
+    # - OpenAI: text-embedding-3-small, text-embedding-ada-002 (requires OPENAI_API_KEY)
+    # - Local: local/all-MiniLM-L6-v2 (uses sentence-transformers, no API key needed)
+    # - Local: sentence-transformers/all-MiniLM-L6-v2 (alternative format)
+    # - Ollama: ollama/nomic-embed-text (if available, requires ollama_base_url)
+    # - And many more: https://docs.litellm.ai/docs/embedding/supported_embedding
+    embedding_model: str = "local/all-MiniLM-L6-v2"
 
     # Message Queue (Redis)
     redis_url: str = "redis://localhost:6379/0"

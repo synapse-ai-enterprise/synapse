@@ -248,8 +248,26 @@ class TechnicalConcern(BaseModel):
             normalized["recommendation"] = data["recommendation"]
         elif "suggestion" in data:
             normalized["recommendation"] = data["suggestion"]
-        
-        return cls(**normalized)
+
+
+class SupervisorDecision(BaseModel):
+    """Supervisor routing decision for multi-agent debate."""
+
+    next_action: Literal[
+        "draft",
+        "qa_critique",
+        "developer_critique",
+        "synthesize",
+        "validate",
+        "execute",
+        "end"
+    ] = Field(description="Next action to take in the workflow")
+    reasoning: str = Field(description="Explanation for the routing decision")
+    should_continue: bool = Field(description="Whether to continue the debate loop")
+    priority_focus: Optional[Literal["quality", "feasibility", "business_value", "none"]] = Field(
+        None, description="Primary focus area for next iteration"
+    )
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the routing decision")
 
 
 class FeasibilityAssessment(BaseModel):

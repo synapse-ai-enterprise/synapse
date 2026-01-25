@@ -50,11 +50,16 @@ class LanceDBAdapter(IKnowledgeBase):
         if table_name in self.db.table_names():
             self.table = self.db.open_table(table_name)
         else:
+            # Determine embedding dimension dynamically by generating a test embedding
+            # This ensures the schema matches the actual embedding model
+            test_embedding = self.embedding_fn("test")
+            embedding_dim = len(test_embedding) if test_embedding else 384  # Default to 384 if test fails
+            
             # Create schema for knowledge base
             schema = pa.schema(
                 [
                     pa.field("id", pa.string()),
-                    pa.field("vector", pa.list_(pa.float32(), 1536)),  # OpenAI embedding dimension
+                    pa.field("vector", pa.list_(pa.float32(), embedding_dim)),
                     pa.field("text", pa.string()),
                     pa.field("summary", pa.string()),
                     pa.field("source", pa.string()),

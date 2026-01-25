@@ -93,3 +93,34 @@ class IOptimizationRequest(Protocol):
     async def handle_request(self, request: OptimizationRequest) -> None:
         """Process an optimization request."""
         ...
+
+
+class IProgressCallback(Protocol):
+    """Port for progress callbacks during workflow execution."""
+
+    async def on_node_start(self, node_name: str, state: Dict) -> None:
+        """Called when a node starts execution.
+        
+        Args:
+            node_name: Name of the node starting.
+            state: Current state dictionary.
+        """
+        ...
+
+    async def on_node_complete(self, node_name: str, state: Dict) -> None:
+        """Called when a node completes execution.
+        
+        Args:
+            node_name: Name of the node that completed.
+            state: Updated state dictionary after node execution.
+        """
+        ...
+
+    async def on_iteration_update(self, iteration: int, state: Dict) -> None:
+        """Called when debate iteration updates.
+        
+        Args:
+            iteration: Current iteration number.
+            state: Current state dictionary with debate history.
+        """
+        ...
