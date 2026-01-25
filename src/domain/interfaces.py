@@ -1,6 +1,6 @@
 """Port interfaces using Python Protocol for structural subtyping."""
 
-from typing import Dict, List, Literal, Optional, Protocol
+from typing import Dict, List, Literal, Mapping, Optional, Protocol
 
 from src.domain.schema import CoreArtifact, OptimizationRequest, UASKnowledgeUnit
 
@@ -50,8 +50,40 @@ class ILLMProvider(Protocol):
         """Generate a chat completion."""
         ...
 
+    async def structured_completion(
+        self,
+        messages: List[Dict[str, str]],
+        response_model: type,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+    ) -> object:
+        """Generate a structured completion using JSON schema.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            response_model: Pydantic model class for structured output.
+            model: Model name (overrides default).
+            temperature: Sampling temperature.
+            
+        Returns:
+            Instance of response_model with parsed structured data.
+        """
+        ...
+
     async def get_embedding(self, text: str) -> List[float]:
         """Get embedding vector for text."""
+        ...
+
+
+class IWebhookIngress(Protocol):
+    """Port for webhook ingress adapters."""
+
+    def handle_webhook(
+        self,
+        payload: Dict,
+        headers: Mapping[str, str],
+    ) -> Optional[OptimizationRequest]:
+        """Normalize a webhook payload into an optimization request."""
         ...
 
 

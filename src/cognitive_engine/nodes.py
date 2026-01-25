@@ -82,11 +82,15 @@ async def drafting_node(
         Updated state dictionary.
     """
     state = _state_from_dict(state_dict)
-    if not state.current_artifact:
+    
+    # Use refined_artifact if available (from previous iteration), otherwise current_artifact
+    artifact_to_draft = state.refined_artifact if state.refined_artifact else state.current_artifact
+    
+    if not artifact_to_draft:
         return state_dict
 
     draft = await po_agent.draft_artifact(
-        state.current_artifact,
+        artifact_to_draft,
         state.retrieved_context,
     )
 
@@ -113,14 +117,17 @@ async def qa_critique_node(
     if not state.draft_artifact:
         return state_dict
 
-    # Get critique from QA agent
-    critique_result = await qa_agent.critique_artifact(state.draft_artifact)
+    try:
+        # Get critique from QA agent
+        critique_result = await qa_agent.critique_artifact(state.draft_artifact)
 
-    # Get programmatic INVEST violations
-    violations = invest_validator.validate(state.draft_artifact)
+        # Get programmatic INVEST violations
+        violations = invest_validator.validate(state.draft_artifact)
 
-    state.qa_critique = critique_result["critique"]
-    state.invest_violations = violations + critique_result["violations"]
+        state.qa_critique = critique_result["critique"]
+        state.invest_violations = violations + critique_result["violations"]
+    except Exception as e:
+        raise
     
     return _state_to_dict(state)
 
@@ -177,9 +184,11 @@ async def synthesis_node(
     if not critiques:
         return state_dict
 
+    # Pass violations explicitly to help PO Agent address them
     refined = await po_agent.synthesize_feedback(
         state.draft_artifact,
         critiques,
+        violations=state.invest_violations,
     )
 
     state.refined_artifact = refined
@@ -219,8 +228,44 @@ def validation_node(
     """
     state = _state_from_dict(state_dict)
     
-    # Calculate confidence based on critiques
+    # Calculate confidence based on critiques and violation improvement
     confidence = 0.5  # Default
+    
+    previous_confidence = state.confidence_score
+    previous_violations_count = len(state_dict.get("invest_violations", []))
+    previous_violations = set(state_dict.get("invest_violations", []))
+    current_violations_count = len(state.invest_violations)
+    current_violations = set(state.invest_violations)
+    
+    # Track improvement: violations decreased
+    if previous_violations_count > 0:
+        if current_violations_count < previous_violations_count:
+            # Violations decreased - reward improvement
+            improvement_ratio = (previous_violations_count - current_violations_count) / previous_violations_count
+            confidence = 0.5 + (improvement_ratio * 0.3)  # Up to 0.8 for complete resolution
+        elif current_violations_count == previous_violations_count:
+            # Same number, but check if violations changed (some fixed, new ones introduced)
+            violations_resolved = len(previous_violations - current_violations)
+            violations_introduced = len(current_violations - previous_violations)
+            if violations_resolved > violations_introduced:
+                # Net improvement
+                confidence = 0.55
+            elif violations_resolved == 0 and violations_introduced == 0:
+                # No change at all
+                confidence = 0.5
+            else:
+                # Net degradation
+                confidence = 0.45
+        else:
+            # Violations increased - penalize
+            degradation_ratio = (current_violations_count - previous_violations_count) / max(previous_violations_count, 1)
+            confidence = max(0.3, 0.5 - (degradation_ratio * 0.2))
+    else:
+        # First iteration or no previous violations
+        if current_violations_count == 0:
+            confidence = 0.8
+        else:
+            confidence = 0.5
 
     # Increase confidence if no violations
     if not state.invest_violations:
@@ -232,7 +277,7 @@ def validation_node(
     if state.developer_critique and "feasible" in state.developer_critique.lower():
         confidence += 0.1
 
-    confidence = min(1.0, confidence)
+    confidence = min(1.0, max(0.0, confidence))
 
     state.confidence_score = confidence
     state.iteration_count = state.iteration_count + 1

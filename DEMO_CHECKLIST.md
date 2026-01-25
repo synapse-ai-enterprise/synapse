@@ -72,7 +72,7 @@ Use this checklist to prepare for demonstrating the Agentic AI PoC.
 
 **Steps:**
 1. Start server: `poetry run python -m src.main`
-2. Show webhook endpoint: `http://localhost:8000/webhooks/linear`
+2. Show webhook endpoint: `http://localhost:8000/webhooks/issue-tracker`
 3. Trigger event in Linear (e.g., create/update issue)
 4. Show logs of processing
 5. Show results in Linear

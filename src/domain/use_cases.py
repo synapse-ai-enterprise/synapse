@@ -1,6 +1,5 @@
 """Use cases for domain logic."""
 
-import asyncio
 from typing import Any, Dict
 
 from src.cognitive_engine.graph import create_cognitive_graph

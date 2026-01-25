@@ -133,9 +133,9 @@ poetry run python -m src.main optimize LIN-123
 poetry run python -m src.main
 ```
 
-2. Configure Linear webhook to point to:
+2. Configure your issue tracker webhook to point to:
 ```
-http://your-server:8000/webhooks/linear
+http://your-server:8000/webhooks/issue-tracker
 ```
 
 3. Set `LINEAR_WEBHOOK_SECRET` in `.env` for signature verification

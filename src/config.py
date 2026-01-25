@@ -1,5 +1,6 @@
 """Configuration management using Pydantic Settings."""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +19,25 @@ class Settings(BaseSettings):
     linear_webhook_secret: str = ""
     github_token: str = ""
     notion_token: str = ""
+
+    # Providers
+    issue_tracker_provider: str = "linear"
+    webhook_provider: str = "linear"
+
+    # Adapter registry (provider -> import path)
+    issue_tracker_adapters: dict[str, str] = Field(
+        default_factory=lambda: {
+            "linear": "src.adapters.egress.linear_egress:LinearEgressAdapter",
+            "mock": "src.adapters.egress.mock_issue_tracker:MockIssueTracker",
+        }
+    )
+    webhook_ingress_adapters: dict[str, str] = Field(
+        default_factory=lambda: {
+            "linear": "src.adapters.ingress.linear_ingress:LinearIngressAdapter",
+        }
+    )
+    issue_tracker_adapter_path: str = ""
+    webhook_ingress_adapter_path: str = ""
 
     # Targets
     github_repo: str = ""

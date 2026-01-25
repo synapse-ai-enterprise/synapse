@@ -2,12 +2,9 @@
 
 import asyncio
 import sys
-from typing import Dict
 
 import click
-from fastapi import FastAPI, Header, HTTPException, Request, Response
-
-from src.adapters.ingress.linear_ingress import LinearIngressAdapter
+from fastapi import FastAPI, HTTPException, Request, Response
 from src.config import settings
 from src.domain.schema import OptimizationRequest
 from src.infrastructure.di import get_container
@@ -31,16 +28,12 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/webhooks/linear")
-async def linear_webhook(
-    request: Request,
-    linear_signature: str = Header(..., alias="linear-signature"),
-):
-    """Handle Linear webhook events.
+@app.post("/webhooks/issue-tracker")
+async def issue_tracker_webhook(request: Request):
+    """Handle issue tracker webhook events.
 
     Args:
         request: FastAPI request object.
-        linear_signature: HMAC signature from Linear.
 
     Returns:
         202 Accepted response.
@@ -50,8 +43,9 @@ async def linear_webhook(
         payload = await request.json()
 
         # Handle webhook via ingress adapter
-        ingress_adapter = LinearIngressAdapter()
-        optimization_request = ingress_adapter.handle_webhook(payload, linear_signature)
+        container = get_container()
+        ingress_adapter = container.get_webhook_ingress()
+        optimization_request = ingress_adapter.handle_webhook(payload, request.headers)
 
         if not optimization_request:
             # Event not relevant, return 200 OK
@@ -86,10 +80,10 @@ def cli():
 @cli.command()
 @click.argument("issue_id")
 def optimize(issue_id: str):
-    """Manually optimize a Linear issue.
+    """Manually optimize an issue.
 
     Args:
-        issue_id: Linear issue ID to optimize.
+        issue_id: Issue ID to optimize.
     """
     import asyncio
 
@@ -99,7 +93,7 @@ def optimize(issue_id: str):
         request = OptimizationRequest(
             artifact_id=issue_id,
             artifact_type="issue",
-            source_system="linear",
+            source_system=settings.issue_tracker_provider.strip().lower(),
             trigger="manual",
             dry_run=settings.dry_run,
         )

@@ -24,6 +24,7 @@ def test_imports():
             IIssueTracker,
             IKnowledgeBase,
             ILLMProvider,
+            IWebhookIngress,
         )
         print("  ✅ Domain layer imports")
         
@@ -41,10 +42,34 @@ def test_imports():
         print("  ✅ Cognitive engine imports")
         
         # Adapters
-        from src.adapters.egress.linear_egress import LinearEgressAdapter
-        from src.adapters.ingress.linear_ingress import LinearIngressAdapter
+        from importlib import import_module
         from src.adapters.llm.litellm_adapter import LiteLLMAdapter
         from src.adapters.rate_limiter import TokenBucket
+
+        def import_adapter(adapter_path: str) -> None:
+            module_path, _, class_name = adapter_path.partition(":")
+            if not module_path or not class_name:
+                raise ValueError(
+                    f"Invalid adapter path '{adapter_path}'. Expected 'module.path:ClassName'."
+                )
+            module = import_module(module_path)
+            getattr(module, class_name)
+
+        issue_tracker_provider = settings.issue_tracker_provider.strip().lower()
+        webhook_provider = settings.webhook_provider.strip().lower()
+        issue_tracker_path = settings.issue_tracker_adapter_path.strip()
+        if not issue_tracker_path:
+            issue_tracker_path = settings.issue_tracker_adapters.get(issue_tracker_provider, "")
+        webhook_path = settings.webhook_ingress_adapter_path.strip()
+        if not webhook_path:
+            webhook_path = settings.webhook_ingress_adapters.get(webhook_provider, "")
+        if not issue_tracker_path:
+            raise ValueError(f"Unsupported issue tracker provider: {issue_tracker_provider}")
+        if not webhook_path:
+            raise ValueError(f"Unsupported webhook provider: {webhook_provider}")
+
+        import_adapter(issue_tracker_path)
+        import_adapter(webhook_path)
         print("  ✅ Adapter imports")
         
         # Infrastructure
@@ -300,7 +325,7 @@ def test_fastapi_app():
         # Check routes exist
         routes = [route.path for route in app.routes]
         assert "/health" in routes, "Health endpoint missing"
-        assert "/webhooks/linear" in routes, "Webhook endpoint missing"
+        assert "/webhooks/issue-tracker" in routes, "Webhook endpoint missing"
         print("  ✅ FastAPI routes registered")
         
         return True

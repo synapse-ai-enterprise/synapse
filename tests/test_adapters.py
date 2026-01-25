@@ -28,6 +28,7 @@ class TestLinearEgressAdapter:
             mock_settings.dry_run = False
             mock_settings.mode = "autonomous"
             mock_settings.require_approval_label = "ai-refined"
+            mock_settings.issue_tracker_provider = "linear"
             adapter = LinearEgressAdapter()
             return adapter
 
@@ -73,6 +74,7 @@ class TestLinearEgressAdapter:
             mock_settings.linear_team_id = "test-team-id"
             mock_settings.mode = "autonomous"
             mock_settings.require_approval_label = ""
+            mock_settings.issue_tracker_provider = "linear"
             
             adapter = LinearEgressAdapter()
             artifact = CoreArtifact(
@@ -99,6 +101,7 @@ class TestLinearEgressAdapter:
             mock_settings.linear_api_key = "test-key"
             mock_settings.linear_team_id = "test-team-id"
             mock_settings.require_approval_label = ""
+            mock_settings.issue_tracker_provider = "linear"
             
             adapter = LinearEgressAdapter()
             artifact = CoreArtifact(
@@ -166,6 +169,7 @@ class TestLinearIngressAdapter:
         with patch("src.adapters.ingress.linear_ingress.settings") as mock_settings:
             mock_settings.linear_webhook_secret = "test-secret"
             mock_settings.dry_run = False
+            mock_settings.webhook_provider = "linear"
             adapter = LinearIngressAdapter()
             return adapter
 
@@ -178,7 +182,7 @@ class TestLinearIngressAdapter:
         
         # Mock signature verification
         with patch.object(adapter, "_verify_signature", return_value=True):
-            result = adapter.handle_webhook(payload, "test-signature")
+            result = adapter.handle_webhook(payload, {"linear-signature": "test-signature"})
             
             assert result is not None
             assert isinstance(result, OptimizationRequest)
@@ -196,7 +200,7 @@ class TestLinearIngressAdapter:
         }
         
         with patch.object(adapter, "_verify_signature", return_value=True):
-            result = adapter.handle_webhook(payload, "test-signature")
+            result = adapter.handle_webhook(payload, {"linear-signature": "test-signature"})
             
             assert result is not None
             assert isinstance(result, OptimizationRequest)
@@ -212,7 +216,7 @@ class TestLinearIngressAdapter:
         }
         
         with patch.object(adapter, "_verify_signature", return_value=True):
-            result = adapter.handle_webhook(payload, "test-signature")
+            result = adapter.handle_webhook(payload, {"linear-signature": "test-signature"})
             
             assert result is None  # Should ignore status-only changes
 
@@ -224,7 +228,7 @@ class TestLinearIngressAdapter:
         }
         
         with patch.object(adapter, "_verify_signature", return_value=True):
-            result = adapter.handle_webhook(payload, "test-signature")
+            result = adapter.handle_webhook(payload, {"linear-signature": "test-signature"})
             
             assert result is None  # Should ignore irrelevant events
 
@@ -252,6 +256,7 @@ class TestLinearIngressAdapter:
         """Test signature verification when no secret configured."""
         with patch("src.adapters.ingress.linear_ingress.settings") as mock_settings:
             mock_settings.linear_webhook_secret = ""
+            mock_settings.webhook_provider = "linear"
             adapter = LinearIngressAdapter()
             
             # Should return True in dev mode (no secret)

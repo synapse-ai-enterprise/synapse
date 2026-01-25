@@ -3,7 +3,7 @@
 from typing import Dict, List
 
 from src.domain.interfaces import ILLMProvider
-from src.domain.schema import CoreArtifact, UASKnowledgeUnit
+from src.domain.schema import CoreArtifact, FeasibilityAssessment, UASKnowledgeUnit
 
 
 class DeveloperAgent:
@@ -78,38 +78,67 @@ Related Files: {', '.join(artifact.related_files) if artifact.related_files else
 {context_text}
 
 **Task:**
-1. Verify referenced files exist in codebase
-2. Assess technical feasibility
-3. Identify dependencies and blockers
-4. Rate confidence (0.0-1.0)
+1. Verify referenced files exist in codebase (check context above)
+2. Assess technical feasibility:
+   - "feasible": Can be implemented with current architecture
+   - "blocked": Cannot proceed due to blockers
+   - "requires_changes": Needs architectural changes first (use underscore, not hyphen)
+3. Identify dependencies:
+   - Type: code, infrastructure, external_service, data, other
+   - Whether blocking or not
+4. Identify technical concerns with severity (blocker/high/medium/low)
+5. Rate confidence in assessment (0.0-1.0)
 
-Format your response as:
-FEASIBILITY: [feasible/blocked/requires-changes]
+Return a JSON object with this EXACT structure:
+{{
+  "status": "requires_changes",
+  "dependencies": [
+    {{
+      "dependency_type": "code",
+      "description": "Description of the dependency",
+      "blocking": true
+    }}
+  ],
+  "concerns": [
+    {{
+      "severity": "high",
+      "description": "Description of the concern",
+      "recommendation": "Optional recommendation"
+    }}
+  ],
+  "confidence": 0.8,
+  "assessment_text": "Detailed assessment text"
+}}
 
-DEPENDENCIES:
-- [list of dependencies]
-
-CONCERNS:
-- [list of technical concerns]
-
-CONFIDENCE: [0.0-1.0]""",
+IMPORTANT: Use these EXACT field names:
+- For dependencies: "dependency_type" (not "type"), "description" (required), "blocking"
+- For concerns: "severity", "description" (not "detail"), "recommendation" (optional)""",
             },
         ]
 
-        response = await self.llm_provider.chat_completion(messages, temperature=0.5)
+        # Use structured output
+        assessment = await self.llm_provider.structured_completion(
+            messages=messages,
+            response_model=FeasibilityAssessment,
+            temperature=0.5,
+        )
 
-        # Parse response
-        feasibility = self._extract_feasibility(response)
-        dependencies = self._extract_dependencies(response)
-        concerns = self._extract_concerns(response)
-        confidence = self._extract_confidence(response)
+        # Convert to string format for backward compatibility
+        dependency_strings = [
+            f"{d.dependency_type}: {d.description}" + (" (BLOCKING)" if d.blocking else "")
+            for d in assessment.dependencies
+        ]
+        concern_strings = [
+            f"[{c.severity.upper()}] {c.description}" + (f" (Recommendation: {c.recommendation})" if c.recommendation else "")
+            for c in assessment.concerns
+        ]
 
         return {
-            "feasibility": feasibility,
-            "dependencies": dependencies,
-            "concerns": concerns,
-            "critique": response,
-            "confidence": confidence,
+            "feasibility": assessment.status,
+            "dependencies": dependency_strings,
+            "concerns": concern_strings,
+            "critique": assessment.assessment_text,
+            "confidence": assessment.confidence,
         }
 
     def _format_context(self, context: List[UASKnowledgeUnit]) -> str:
@@ -131,91 +160,3 @@ CONFIDENCE: [0.0-1.0]""",
 
         return "\n\n---\n\n".join(formatted)
 
-    def _extract_feasibility(self, text: str) -> str:
-        """Extract feasibility status from assessment.
-
-        Args:
-            text: Assessment text.
-
-        Returns:
-            Feasibility status string.
-        """
-        import re
-
-        match = re.search(r"FEASIBILITY:\s*(\w+)", text, re.IGNORECASE)
-        if match:
-            status = match.group(1).lower()
-            if status in ["feasible", "blocked", "requires-changes"]:
-                return status
-
-        return "unknown"
-
-    def _extract_dependencies(self, text: str) -> List[str]:
-        """Extract dependencies from assessment.
-
-        Args:
-            text: Assessment text.
-
-        Returns:
-            List of dependency strings.
-        """
-        dependencies = []
-        lines = text.split("\n")
-        in_dependencies = False
-
-        for line in lines:
-            line = line.strip()
-            if "DEPENDENCIES:" in line.upper():
-                in_dependencies = True
-                continue
-            if in_dependencies and line.startswith("-"):
-                dependencies.append(line.lstrip("- ").strip())
-            if in_dependencies and line and not line.startswith("-") and "CONCERNS:" not in line.upper():
-                break
-
-        return dependencies
-
-    def _extract_concerns(self, text: str) -> List[str]:
-        """Extract technical concerns from assessment.
-
-        Args:
-            text: Assessment text.
-
-        Returns:
-            List of concern strings.
-        """
-        concerns = []
-        lines = text.split("\n")
-        in_concerns = False
-
-        for line in lines:
-            line = line.strip()
-            if "CONCERNS:" in line.upper():
-                in_concerns = True
-                continue
-            if in_concerns and line.startswith("-"):
-                concerns.append(line.lstrip("- ").strip())
-            if in_concerns and line and not line.startswith("-") and "CONFIDENCE:" not in line.upper():
-                break
-
-        return concerns
-
-    def _extract_confidence(self, text: str) -> float:
-        """Extract confidence score from assessment.
-
-        Args:
-            text: Assessment text.
-
-        Returns:
-            Confidence score (0.0-1.0).
-        """
-        import re
-
-        match = re.search(r"CONFIDENCE:\s*([0-9.]+)", text, re.IGNORECASE)
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                pass
-
-        return 0.7  # Default confidence

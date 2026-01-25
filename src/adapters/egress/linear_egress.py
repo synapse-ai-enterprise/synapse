@@ -21,6 +21,7 @@ class LinearEgressAdapter(IIssueTracker):
         self.dry_run = settings.dry_run
         self.mode = settings.mode
         self.require_approval_label = settings.require_approval_label
+        self.source_system = settings.issue_tracker_provider.strip().lower()
 
         # Token Bucket: 1400 requests/hour = ~0.39 requests/second
         # Capacity: 1400 tokens, refill: 0.39 tokens/second
@@ -401,7 +402,7 @@ I prepared an optimization, but the ticket was edited while I was working. Pleas
             parent_ref = issue_data["parent"].get("identifier")
 
         return CoreArtifact(
-            source_system="linear",
+            source_system=self.source_system,
             source_id=issue_data["id"],
             human_ref=issue_data.get("identifier", ""),
             url=issue_data.get("url", ""),

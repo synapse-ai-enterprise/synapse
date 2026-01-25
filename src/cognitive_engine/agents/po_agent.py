@@ -3,7 +3,7 @@
 from typing import List
 
 from src.domain.interfaces import ILLMProvider
-from src.domain.schema import CoreArtifact, UASKnowledgeUnit
+from src.domain.schema import ArtifactRefinement, CoreArtifact, UASKnowledgeUnit
 
 
 class ProductOwnerAgent:
@@ -59,45 +59,73 @@ Title: {artifact.title}
 Description: {artifact.description}
 Type: {artifact.type}
 Priority: {artifact.priority.value}
+Acceptance Criteria: {chr(10).join(f"- {ac}" for ac in artifact.acceptance_criteria) if artifact.acceptance_criteria else "None"}
 
 **Context from Knowledge Base:**
 {context_text}
 
 **Task:**
-1. Refine the title to follow user story format if it's a story
-2. Improve the description with clear value proposition
-3. Generate specific, testable acceptance criteria
+1. Refine the title to follow user story format if it's a story (e.g., "As a [user], I want [goal], so that [benefit]")
+2. Improve the description with clear value proposition and user story format
+3. Generate specific, testable acceptance criteria (binary pass/fail)
 4. Ensure alignment with business goals
+5. Keep acceptance criteria small and focused
 
-Return the refined artifact in the same structure.""",
+You must return a JSON object with these exact fields:
+- "title": string (the refined title)
+- "description": string (the refined description)
+- "acceptance_criteria": array of strings (list of specific, testable criteria)
+- "rationale": string or null (optional explanation of changes)
+
+Example format:
+{{
+  "title": "As a user, I want to log in securely so that my data is protected",
+  "description": "As a registered user, I want to securely authenticate...",
+  "acceptance_criteria": ["User can log in with valid credentials", "Invalid credentials are rejected"],
+  "rationale": "Clarified user story format and added security focus"
+}}""",
             },
         ]
 
-        response = await self.llm_provider.chat_completion(messages, temperature=0.7)
+        # Use structured output
+        refinement = await self.llm_provider.structured_completion(
+            messages=messages,
+            response_model=ArtifactRefinement,
+            temperature=0.7,
+        )
 
-        # Parse response and update artifact
-        # In a real implementation, you'd parse structured output
-        # For now, we'll update description and extract ACs
+        # Apply refinement to artifact
         refined_artifact = artifact.model_copy()
-        refined_artifact.description = response
-        # Extract acceptance criteria from response (simplified)
-        refined_artifact.acceptance_criteria = self._extract_acceptance_criteria(response)
+        refined_artifact.title = refinement.title
+        refined_artifact.description = refinement.description
+        refined_artifact.acceptance_criteria = refinement.acceptance_criteria
 
         return refined_artifact
 
     async def synthesize_feedback(
-        self, artifact: CoreArtifact, critiques: List[str]
+        self, artifact: CoreArtifact, critiques: List[str], violations: List[str] = None
     ) -> CoreArtifact:
         """Synthesize feedback from QA and Developer agents.
 
         Args:
             artifact: Current artifact draft.
             critiques: List of critique strings from other agents.
+            violations: List of INVEST violations to address.
 
         Returns:
             Refined artifact incorporating feedback.
         """
         critiques_text = "\n\n".join(f"Critique {i+1}:\n{critique}" for i, critique in enumerate(critiques))
+        violations_text = ""
+        if violations:
+            violations_text = f"\n\n**CRITICAL: INVEST Violations to Address (MUST FIX):**\n" + "\n".join(f"- {v}" for v in violations)
+            violations_text += "\n\n**IMPORTANT:** For each violation above, you MUST:\n"
+            violations_text += "- If violation starts with 'S:' (Small), break the story into smaller pieces or remove features\n"
+            violations_text += "- If violation starts with 'T:' (Testable), make acceptance criteria binary and specific\n"
+            violations_text += "- If violation starts with 'V:' (Valuable), ensure 'so that' clause shows user value\n"
+            violations_text += "- If violation starts with 'E:' (Estimable), remove vague terms like 'fast', 'better', 'user-friendly'\n"
+            violations_text += "- If violation starts with 'N:' (Negotiable), make details less prescriptive\n"
+            violations_text += "- If violation starts with 'I:' (Independent), remove dependencies\n"
 
         messages = [
             {"role": "system", "content": self.SYSTEM_PROMPT},
@@ -108,26 +136,49 @@ Return the refined artifact in the same structure.""",
 **Current Artifact:**
 Title: {artifact.title}
 Description: {artifact.description}
-Acceptance Criteria: {chr(10).join(f"- {ac}" for ac in artifact.acceptance_criteria)}
+Acceptance Criteria: {chr(10).join(f"- {ac}" for ac in artifact.acceptance_criteria) if artifact.acceptance_criteria else "None"}
 
 **Critiques:**
 {critiques_text}
+{violations_text}
 
-**Task:**
-1. Address all valid concerns raised in critiques
-2. Maintain business value focus
-3. Ensure technical feasibility
-4. Refine acceptance criteria to be specific and testable
+**Task (PRIORITY ORDER):**
+1. **FIRST**: Address EVERY INVEST violation listed above. Each violation must be explicitly fixed.
+2. Address all valid concerns raised in critiques
+3. Break down large stories into smaller, focused ones if needed (especially for 'S:' violations)
+4. Make acceptance criteria specific, testable, and binary (pass/fail) - remove vague terms
+5. Ensure 'so that' clause shows genuine user value (for 'V:' violations)
+6. Maintain business value focus
+7. Ensure technical feasibility
+8. Ensure each acceptance criterion is independently testable
 
-Return the refined artifact.""",
+You must return a JSON object with these exact fields:
+- "title": string (the refined title)
+- "description": string (the refined description)
+- "acceptance_criteria": array of strings (list of specific, testable criteria)
+- "rationale": string or null (optional explanation of changes)
+
+Example format:
+{{
+  "title": "As a user, I want to log in securely so that my data is protected",
+  "description": "As a registered user, I want to securely authenticate...",
+  "acceptance_criteria": ["User can log in with valid credentials", "Invalid credentials are rejected"],
+  "rationale": "Addressed INVEST violations: made story smaller and more testable"
+}}""",
             },
         ]
 
-        response = await self.llm_provider.chat_completion(messages, temperature=0.7)
+        # Use structured output
+        refinement = await self.llm_provider.structured_completion(
+            messages=messages,
+            response_model=ArtifactRefinement,
+            temperature=0.7,
+        )
 
         refined_artifact = artifact.model_copy()
-        refined_artifact.description = response
-        refined_artifact.acceptance_criteria = self._extract_acceptance_criteria(response)
+        refined_artifact.title = refinement.title
+        refined_artifact.description = refinement.description
+        refined_artifact.acceptance_criteria = refinement.acceptance_criteria
 
         return refined_artifact
 
@@ -151,23 +202,3 @@ Return the refined artifact.""",
 
         return "\n\n---\n\n".join(formatted)
 
-    def _extract_acceptance_criteria(self, text: str) -> List[str]:
-        """Extract acceptance criteria from text.
-
-        Args:
-            text: Text containing acceptance criteria.
-
-        Returns:
-            List of acceptance criteria strings.
-        """
-        # Simple extraction - look for bullet points or numbered lists
-        criteria = []
-        lines = text.split("\n")
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("- ") or line.startswith("* ") or (len(line) > 0 and line[0].isdigit() and ". " in line[:3]):
-                criteria.append(line.lstrip("- *").lstrip("0123456789. "))
-
-        return criteria if criteria else ["Acceptance criteria to be defined"]

@@ -1,8 +1,8 @@
 """Linear webhook ingress adapter."""
 
-import hmac
 import hashlib
-from typing import Dict, Optional
+import hmac
+from typing import Dict, Mapping, Optional
 
 from src.config import settings
 from src.domain.schema import OptimizationRequest
@@ -14,17 +14,18 @@ class LinearIngressAdapter:
     def __init__(self):
         """Initialize adapter with webhook secret."""
         self.webhook_secret = settings.linear_webhook_secret
+        self.source_system = settings.webhook_provider.strip().lower()
 
     def handle_webhook(
         self,
         payload: Dict,
-        signature: str,
+        headers: Mapping[str, str],
     ) -> Optional[OptimizationRequest]:
         """Handle Linear webhook with HMAC verification.
 
         Args:
             payload: Webhook payload dictionary.
-            signature: HMAC signature from header.
+            headers: Request headers containing Linear signature.
 
         Returns:
             OptimizationRequest if event is relevant, None otherwise.
@@ -32,6 +33,8 @@ class LinearIngressAdapter:
         Raises:
             ValueError: If signature verification fails.
         """
+        signature = self._extract_signature(headers)
+
         # Verify signature
         if not self._verify_signature(payload, signature):
             raise ValueError("Invalid webhook signature")
@@ -53,10 +56,24 @@ class LinearIngressAdapter:
         return OptimizationRequest(
             artifact_id=issue_data.get("id", ""),
             artifact_type="issue",
-            source_system="linear",
+            source_system=self.source_system,
             trigger="webhook",
             dry_run=settings.dry_run,
         )
+
+    def _extract_signature(self, headers: Mapping[str, str]) -> str:
+        """Extract Linear signature from request headers.
+
+        Args:
+            headers: Request headers.
+
+        Returns:
+            Signature string if present, otherwise empty string.
+        """
+        for key, value in headers.items():
+            if key.lower() == "linear-signature":
+                return value
+        return ""
 
     def _verify_signature(self, payload: Dict, signature: str) -> bool:
         """Verify HMAC-SHA256 signature.

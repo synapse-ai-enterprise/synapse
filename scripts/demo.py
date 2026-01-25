@@ -242,12 +242,16 @@ async def run_demo():
             else:
                 print("\n  No context retrieved from knowledge base.")
             
-            # Display debate iterations
+            # Display debate iterations with progress tracking
             debate_history = final_state.get("debate_history", [])
             if debate_history:
                 print("\n" + "=" * 80)
                 print("💬 MULTI-AGENT DEBATE ITERATIONS")
                 print("=" * 80)
+                
+                # Track progress metrics
+                prev_violation_count = None
+                prev_confidence = None
                 
                 for idx, entry in enumerate(debate_history, 1):
                     print(f"\n{'─' * 80}")
@@ -261,40 +265,76 @@ async def run_demo():
                     print(f"   Title: {draft_title}")
                     desc = safe_get(draft, "description", "")
                     if desc:
-                        print(f"   Description: {str(desc)[:300]}...")
+                        print(f"   Description: {str(desc)[:250]}...")
                     draft_ac = safe_get(draft, "acceptance_criteria", [])
                     if draft_ac:
-                        print(f"   Acceptance Criteria:")
+                        print(f"   Acceptance Criteria ({len(draft_ac)}):")
                         for ac in draft_ac[:3]:
                             print(f"     • {ac}")
+                        if len(draft_ac) > 3:
+                            print(f"     ... ({len(draft_ac) - 3} more)")
                     
                     # QA Critique
                     qa_critique = entry.get("qa_critique", "")
                     if qa_critique:
                         print(f"\n🔍 QA Agent Critique:")
-                        # Show first 400 chars of critique
+                        # Show summary first
                         critique_lines = qa_critique.split("\n")
-                        for line in critique_lines[:15]:  # Show first 15 lines
+                        # Try to find summary or key points
+                        summary_lines = []
+                        for i, line in enumerate(critique_lines[:20]):
+                            if line.strip():
+                                summary_lines.append(line)
+                        for line in summary_lines[:10]:
                             print(f"   {line}")
-                        if len(critique_lines) > 15:
-                            print(f"   ... ({len(critique_lines) - 15} more lines)")
+                        if len(critique_lines) > 10:
+                            print(f"   ... ({len(critique_lines) - 10} more lines)")
                     
-                    # INVEST Violations
+                    # INVEST Violations with progress indicator
                     violations = entry.get("invest_violations", [])
+                    violation_count = len(violations)
+                    progress_indicator = ""
+                    if prev_violation_count is not None:
+                        if violation_count < prev_violation_count:
+                            progress_indicator = f" ⬇️  ({prev_violation_count - violation_count} resolved)"
+                        elif violation_count > prev_violation_count:
+                            progress_indicator = f" ⬆️  ({violation_count - prev_violation_count} new)"
+                        else:
+                            progress_indicator = " ➡️  (no change)"
+                    
                     if violations:
-                        print(f"\n⚠️  INVEST Violations ({len(violations)}):")
-                        for violation in violations[:5]:  # Show first 5
-                            print(f"   • {violation}")
+                        print(f"\n⚠️  INVEST Violations ({violation_count}){progress_indicator}:")
+                        # Group violations by criterion
+                        violations_by_criterion = {}
+                        for violation in violations:
+                            # Extract criterion from violation string (format: "I: description" or "S: description")
+                            criterion = "Other"
+                            if ":" in violation:
+                                criterion = violation.split(":")[0].strip()
+                            if criterion not in violations_by_criterion:
+                                violations_by_criterion[criterion] = []
+                            violations_by_criterion[criterion].append(violation)
+                        
+                        for criterion, vios in violations_by_criterion.items():
+                            print(f"   [{criterion}] {len(vios)} violation(s):")
+                            for violation in vios[:2]:
+                                print(f"     • {violation}")
+                            if len(vios) > 2:
+                                print(f"     ... ({len(vios) - 2} more)")
+                    else:
+                        print(f"\n✅ INVEST Violations: None ✓")
+                    
+                    prev_violation_count = violation_count
                     
                     # Developer Critique
                     dev_critique = entry.get("developer_critique", "")
                     if dev_critique:
                         print(f"\n👨‍💻 Developer Agent Critique:")
                         critique_lines = dev_critique.split("\n")
-                        for line in critique_lines[:15]:  # Show first 15 lines
+                        for line in critique_lines[:10]:
                             print(f"   {line}")
-                        if len(critique_lines) > 15:
-                            print(f"   ... ({len(critique_lines) - 15} more lines)")
+                        if len(critique_lines) > 10:
+                            print(f"   ... ({len(critique_lines) - 10} more lines)")
                     
                     # Refined artifact
                     refined = entry.get("refined", {})
@@ -304,36 +344,114 @@ async def run_demo():
                         print(f"   Title: {refined_title}")
                         desc = safe_get(refined, "description", "")
                         if desc:
-                            print(f"   Description: {str(desc)[:300]}...")
+                            print(f"   Description: {str(desc)[:250]}...")
                         refined_ac = safe_get(refined, "acceptance_criteria", [])
                         if refined_ac:
-                            print(f"   Acceptance Criteria:")
+                            print(f"   Acceptance Criteria ({len(refined_ac)}):")
                             for ac in refined_ac[:3]:
                                 print(f"     • {ac}")
+                            if len(refined_ac) > 3:
+                                print(f"     ... ({len(refined_ac) - 3} more)")
                     
-                    # Confidence score
+                    # Confidence score with trend
                     confidence = entry.get("confidence_score", 0.0)
-                    print(f"\n📊 Confidence Score: {confidence:.2f}")
+                    confidence_indicator = ""
+                    if prev_confidence is not None:
+                        if confidence > prev_confidence:
+                            confidence_indicator = f" ⬆️  (+{confidence - prev_confidence:.2f})"
+                        elif confidence < prev_confidence:
+                            confidence_indicator = f" ⬇️  ({confidence - prev_confidence:.2f})"
+                        else:
+                            confidence_indicator = " ➡️  (no change)"
+                    
+                    # Visual confidence bar
+                    confidence_bar = "█" * int(confidence * 20) + "░" * (20 - int(confidence * 20))
+                    print(f"\n📊 Confidence Score: {confidence:.2f}{confidence_indicator}")
+                    print(f"   [{confidence_bar}]")
+                    
+                    prev_confidence = confidence
             
-            # Final summary
+            # Final summary with progress metrics
             print("\n" + "=" * 80)
             print("✅ FINAL SUMMARY")
             print("=" * 80)
-            print(f"\n   - Total Iterations: {final_state.get('iteration_count', 0)}")
-            print(f"   - Final Confidence: {final_state.get('confidence_score', 0.0):.2f}")
+            
+            iteration_count = final_state.get('iteration_count', 0)
+            final_confidence = final_state.get('confidence_score', 0.0)
             violations = final_state.get("invest_violations", [])
-            if violations:
-                print(f"   - Final INVEST Violations: {len(violations)}")
-                for violation in violations:
-                    print(f"     • {violation}")
+            
+            # Calculate progress metrics
+            initial_violations = len(debate_history[0].get("invest_violations", [])) if debate_history else 0
+            final_violation_count = len(violations)
+            violations_resolved = initial_violations - final_violation_count
+            violation_resolution_rate = (violations_resolved / initial_violations * 100) if initial_violations > 0 else 0
+            
+            initial_confidence = debate_history[0].get("confidence_score", 0.0) if debate_history else 0.0
+            confidence_improvement = final_confidence - initial_confidence
+            
+            print(f"\n📈 Progress Metrics:")
+            print(f"   • Total Iterations: {iteration_count}")
+            print(f"   • Initial Violations: {initial_violations}")
+            print(f"   • Final Violations: {final_violation_count}")
+            if violations_resolved > 0:
+                print(f"   • Violations Resolved: {violations_resolved} ({violation_resolution_rate:.1f}%) ✓")
+            elif violations_resolved < 0:
+                print(f"   • New Violations Introduced: {abs(violations_resolved)} ⚠️")
             else:
-                print("   - Final INVEST Violations: None ✓")
+                print(f"   • Violations: No change")
+            
+            print(f"\n📊 Quality Metrics:")
+            print(f"   • Initial Confidence: {initial_confidence:.2f}")
+            print(f"   • Final Confidence: {final_confidence:.2f}")
+            if confidence_improvement > 0:
+                print(f"   • Confidence Improvement: +{confidence_improvement:.2f} ✓")
+            elif confidence_improvement < 0:
+                print(f"   • Confidence Change: {confidence_improvement:.2f} ⚠️")
+            else:
+                print(f"   • Confidence: No change")
+            
+            # Final violations breakdown
+            if violations:
+                print(f"\n⚠️  Remaining INVEST Violations ({final_violation_count}):")
+                violations_by_criterion = {}
+                for violation in violations:
+                    criterion = "Other"
+                    if ":" in violation:
+                        criterion = violation.split(":")[0].strip()
+                    if criterion not in violations_by_criterion:
+                        violations_by_criterion[criterion] = []
+                    violations_by_criterion[criterion].append(violation)
+                
+                for criterion, vios in violations_by_criterion.items():
+                    print(f"   [{criterion}] {len(vios)} violation(s):")
+                    for violation in vios:
+                        print(f"     • {violation}")
+            else:
+                print(f"\n✅ INVEST Violations: None ✓")
             
             # Show final artifact
             refined_artifact = final_state.get("refined_artifact") or final_state.get("draft_artifact")
             if refined_artifact:
+                print(f"\n📋 Final Artifact:")
                 final_title = safe_get(refined_artifact, "title", "N/A")
-                print(f"\n   Final Artifact Title: {final_title}")
+                print(f"   Title: {final_title}")
+                final_desc = safe_get(refined_artifact, "description", "")
+                if final_desc:
+                    print(f"   Description: {str(final_desc)[:200]}...")
+                final_ac = safe_get(refined_artifact, "acceptance_criteria", [])
+                if final_ac:
+                    print(f"   Acceptance Criteria: {len(final_ac)} criteria defined")
+            
+            # Overall assessment
+            print(f"\n🎯 Overall Assessment:")
+            if final_confidence >= 0.8 and final_violation_count == 0:
+                print("   ✅ Excellent: High confidence and no violations")
+            elif final_confidence >= 0.7 and final_violation_count <= 2:
+                print("   ✅ Good: Acceptable quality with minor issues")
+            elif final_confidence >= 0.6:
+                print("   ⚠️  Needs Improvement: Moderate quality, some violations remain")
+            else:
+                print("   ⚠️  Poor: Low confidence, significant violations remain")
         else:
             error_msg = result.get('error', 'Unknown error')
             print(f"❌ Optimization failed: {error_msg}")

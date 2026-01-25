@@ -27,13 +27,16 @@ class WorkItemStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+SourceSystem = str
+
+
 class CoreArtifact(BaseModel):
     """The Unified Agile Artifact. Abstracts Linear/GitHub into a common cognitive model."""
 
     internal_id: UUID = Field(default_factory=uuid4, description="System-local unique identifier")
 
     # Traceability
-    source_system: Literal["linear", "github"] = Field(description="Source system")
+    source_system: SourceSystem = Field(description="Source system identifier")
     source_id: str = Field(description="The immutable ID from the source (e.g., Linear UUID)")
     human_ref: str = Field(description="The readable ID (e.g., 'LIN-123')")
     url: str = Field(description="Direct link to the artifact")
@@ -86,6 +89,174 @@ class OptimizationRequest(BaseModel):
 
     artifact_id: str
     artifact_type: Literal["issue", "epic", "story"]
-    source_system: Literal["linear"]
+    source_system: SourceSystem
     trigger: Literal["webhook", "manual", "scheduled"]
     dry_run: bool = False
+
+
+# Structured Agent Output Models
+
+
+class ArtifactRefinement(BaseModel):
+    """Structured output from PO Agent for artifact refinement."""
+
+    title: str = Field(description="Refined title following user story format")
+    description: str = Field(description="Refined description with clear value proposition")
+    acceptance_criteria: List[str] = Field(description="Specific, testable acceptance criteria")
+    rationale: Optional[str] = Field(None, description="Explanation of key changes made")
+
+
+class InvestViolation(BaseModel):
+    """Structured INVEST violation from QA Agent."""
+
+    criterion: Literal["I", "N", "V", "E", "S", "T"] = Field(
+        description="INVEST criterion violated: I=Independent, N=Negotiable, V=Valuable, E=Estimable, S=Small, T=Testable"
+    )
+    severity: Literal["critical", "major", "minor"] = Field(description="Severity of violation")
+    description: str = Field(description="Description of the violation")
+    evidence: Optional[str] = Field(None, description="Specific evidence from artifact")
+    suggestion: Optional[str] = Field(None, description="Suggestion for how to fix")
+
+    @classmethod
+    def from_llm_response(cls, data: dict) -> "InvestViolation":
+        """Convert LLM response with different field names to InvestViolation.
+        
+        Handles variations like INVEST_criterion -> criterion, Evidence -> description, etc.
+        """
+        normalized = {}
+        
+        # Map criterion
+        if "INVEST_criterion" in data:
+            criterion_value = data["INVEST_criterion"]
+            # Map full names to letters
+            criterion_map = {
+                "Independent": "I",
+                "Negotiable": "N",
+                "Valuable": "V",
+                "Estimable": "E",
+                "Small": "S",
+                "Testable": "T",
+            }
+            normalized["criterion"] = criterion_map.get(criterion_value, criterion_value)
+        elif "criterion" in data:
+            criterion_value = data["criterion"]
+            # Normalize to uppercase (handle lowercase 'i', 'n', 'v', 'e', 's', 't')
+            if isinstance(criterion_value, str):
+                criterion_value = criterion_value.upper()
+            normalized["criterion"] = criterion_value
+        
+        # Map severity (case-insensitive)
+        if "Severity" in data:
+            normalized["severity"] = data["Severity"].lower()
+        elif "severity" in data:
+            normalized["severity"] = data["severity"].lower()
+        
+        # Map description/evidence
+        if "Evidence" in data:
+            normalized["description"] = data["Evidence"]
+        elif "description" in data:
+            normalized["description"] = data["description"]
+        
+        # Map suggestion
+        if "Suggestion" in data:
+            normalized["suggestion"] = data["Suggestion"]
+        elif "suggestion" in data:
+            normalized["suggestion"] = data["suggestion"]
+        
+        # Evidence field (optional)
+        if "evidence" in data:
+            normalized["evidence"] = data["evidence"]
+        
+        return cls(**normalized)
+
+
+class InvestCritique(BaseModel):
+    """Structured critique from QA Agent."""
+
+    violations: List[InvestViolation] = Field(default_factory=list, description="List of INVEST violations")
+    critique_text: str = Field(description="Detailed critique text")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in critique (0.0-1.0)")
+    overall_assessment: Literal["excellent", "good", "needs_improvement", "poor"] = Field(
+        description="Overall quality assessment"
+    )
+
+
+class TechnicalDependency(BaseModel):
+    """Technical dependency identified by Developer Agent."""
+
+    dependency_type: Literal["code", "infrastructure", "external_service", "data", "other"] = Field(
+        description="Type of dependency"
+    )
+    description: str = Field(description="Description of dependency")
+    blocking: bool = Field(description="Whether this is a blocking dependency")
+
+    @classmethod
+    def from_llm_response(cls, data: dict) -> "TechnicalDependency":
+        """Transform LLM response with different field names."""
+        normalized = {}
+        
+        # Map dependency_type (might be "type")
+        if "dependency_type" in data:
+            normalized["dependency_type"] = data["dependency_type"]
+        elif "type" in data:
+            normalized["dependency_type"] = data["type"]
+        else:
+            normalized["dependency_type"] = "other"
+        
+        # Map description (required field)
+        if "description" in data:
+            normalized["description"] = data["description"]
+        elif "detail" in data:
+            normalized["description"] = data["detail"]
+        else:
+            # Fallback: create description from type
+            dep_type = normalized.get("dependency_type", "dependency")
+            normalized["description"] = f"{dep_type.replace('_', ' ').title()} dependency required"
+        
+        # Map blocking
+        normalized["blocking"] = data.get("blocking", False)
+        
+        return cls(**normalized)
+
+
+class TechnicalConcern(BaseModel):
+    """Technical concern identified by Developer Agent."""
+
+    severity: Literal["blocker", "high", "medium", "low"] = Field(description="Severity of concern")
+    description: str = Field(description="Description of the concern")
+    recommendation: Optional[str] = Field(None, description="Recommendation for addressing")
+
+    @classmethod
+    def from_llm_response(cls, data: dict) -> "TechnicalConcern":
+        """Transform LLM response with different field names."""
+        normalized = {}
+        
+        # Map severity
+        if "severity" in data:
+            normalized["severity"] = data["severity"].lower()
+        
+        # Map description (might be "detail")
+        if "description" in data:
+            normalized["description"] = data["description"]
+        elif "detail" in data:
+            normalized["description"] = data["detail"]
+        else:
+            normalized["description"] = "Technical concern"
+        
+        # Map recommendation
+        if "recommendation" in data:
+            normalized["recommendation"] = data["recommendation"]
+        elif "suggestion" in data:
+            normalized["recommendation"] = data["suggestion"]
+        
+        return cls(**normalized)
+
+
+class FeasibilityAssessment(BaseModel):
+    """Structured feasibility assessment from Developer Agent."""
+
+    status: Literal["feasible", "blocked", "requires_changes"] = Field(description="Feasibility status")
+    dependencies: List[TechnicalDependency] = Field(default_factory=list, description="List of dependencies")
+    concerns: List[TechnicalConcern] = Field(default_factory=list, description="List of technical concerns")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in assessment (0.0-1.0)")
+    assessment_text: str = Field(description="Detailed assessment text")
