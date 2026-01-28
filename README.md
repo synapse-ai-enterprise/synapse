@@ -1,6 +1,6 @@
-# Agentic AI PoC: Local-First Workflow Automation
+# Synapse AI: Local-First Workflow Automation
 
-A Proof of Concept (PoC) Agentic AI system designed to orchestrate workflows between Linear, GitHub, and Notion using a local-first, self-hosted architecture.
+Synapse AI is an agentic AI system that orchestrates workflows between Linear, GitHub, and Notion using a local-first, self-hosted architecture.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ This system follows **Hexagonal Architecture** (Ports and Adapters) with:
 ## Project Structure
 
 ```
-agentic-poc/
+synapse/
 ├── src/
 │   ├── domain/              # Domain Layer: Pure Business Logic
 │   ├── cognitive_engine/    # Application Layer: Orchestration
