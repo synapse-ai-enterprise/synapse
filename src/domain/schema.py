@@ -1,7 +1,8 @@
 """Unified Agile Schema (UAS) - Canonical data models."""
 
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -82,6 +83,47 @@ class UASSignal(BaseModel):
     context_url: Optional[str] = None
     intent_classification: Optional[str] = None
     webhook_payload: Dict[str, Any] = Field(default_factory=dict, description="Raw webhook data")
+
+
+class MemoryTier(str, Enum):
+    """Memory tier for agent context."""
+
+    CONVERSATION = "conversation"
+    WORKING = "working"
+    LONG_TERM = "long_term"
+
+
+class MemoryScope(str, Enum):
+    """Scope for memory isolation."""
+
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+    USER = "user"
+    SESSION = "session"
+
+
+class MemoryItem(BaseModel):
+    """A memory record for agents."""
+
+    id: UUID = Field(default_factory=uuid4, description="Unique memory identifier")
+    tier: MemoryTier = Field(description="Memory tier")
+    scope: MemoryScope = Field(description="Memory scope")
+    key: str = Field(description="Lookup key for memory retrieval")
+    content: str = Field(description="Memory content")
+    source: Optional[str] = Field(None, description="Source system or origin")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiry timestamp")
+
+
+class DomainEvent(BaseModel):
+    """Domain event emitted during workflows."""
+
+    id: UUID = Field(default_factory=uuid4, description="Event identifier")
+    event_type: str = Field(description="Event type")
+    payload: Dict[str, Any] = Field(default_factory=dict, description="Event payload")
+    trace_id: Optional[str] = Field(None, description="Trace identifier")
+    occurred_at: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
 
 
 class OptimizationRequest(BaseModel):
@@ -278,3 +320,295 @@ class FeasibilityAssessment(BaseModel):
     concerns: List[TechnicalConcern] = Field(default_factory=list, description="List of technical concerns")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in assessment (0.0-1.0)")
     assessment_text: str = Field(description="Detailed assessment text")
+
+
+# Product Story Writing AI models
+
+
+class StoryWritingRequest(BaseModel):
+    """Request for product story writing workflow."""
+
+    flow: Literal["epic_to_stories", "story_to_detail"] = Field(
+        description="Which module flow to run"
+    )
+    epic_id: Optional[str] = Field(None, description="Epic identifier if available")
+    epic_text: Optional[str] = Field(None, description="Epic description text")
+    selected_techniques: List[str] = Field(default_factory=list, description="Chosen splitting techniques")
+    story_text: Optional[str] = Field(None, description="Story text to detail")
+    template_text: Optional[str] = Field(None, description="Story template text (if provided)")
+    project_id: Optional[str] = Field(None, description="Project identifier for context")
+    requester_id: Optional[str] = Field(None, description="User identifier for preference lookup")
+
+
+class EpicEntities(BaseModel):
+    """Key entities extracted from an epic."""
+
+    user_persona: Optional[str] = Field(None, description="Primary user persona")
+    capability: Optional[str] = Field(None, description="Primary capability")
+    benefit: Optional[str] = Field(None, description="Primary user or business benefit")
+    constraints: List[str] = Field(default_factory=list, description="Constraints mentioned in epic")
+
+
+class EpicAnalysis(BaseModel):
+    """Structured output from Epic Analysis Agent."""
+
+    epic_id: Optional[str] = Field(None, description="Epic identifier")
+    entities: EpicEntities = Field(description="Extracted key entities")
+    complexity_score: float = Field(ge=0.0, le=1.0, description="Complexity score (0.0-1.0)")
+    ambiguities: List[str] = Field(default_factory=list, description="Missing info or ambiguous areas")
+    domain: Optional[str] = Field(None, description="Domain classification")
+    epic_type: Optional[str] = Field(None, description="Epic type classification")
+
+
+class SplittingRecommendation(BaseModel):
+    """Splitting technique recommendation."""
+
+    technique: str = Field(description="Recommended splitting technique")
+    confidence: float = Field(ge=0.0, le=1.0, description="Recommendation confidence")
+    rationale: str = Field(description="Why this technique applies")
+    example_splits: List[str] = Field(default_factory=list, description="Example split ideas")
+
+
+class SplittingStrategyResult(BaseModel):
+    """Structured output for splitting strategy recommendations."""
+
+    recommendations: List[SplittingRecommendation] = Field(default_factory=list)
+
+
+class StoryCandidate(BaseModel):
+    """Generated story candidate from an epic."""
+
+    story_id: Optional[str] = Field(None, description="Story identifier if generated")
+    title: str = Field(description="Story title")
+    description: str = Field(description="Story description")
+    technique_applied: Optional[str] = Field(None, description="Technique used to generate story")
+    parent_epic: Optional[str] = Field(None, description="Parent epic reference")
+    story_points: Optional[int] = Field(None, description="Estimated story points")
+    initial_acceptance_criteria: List[str] = Field(default_factory=list, description="Draft ACs")
+
+
+class StoryGenerationResult(BaseModel):
+    """Structured output for story generation."""
+
+    stories: List[StoryCandidate] = Field(default_factory=list)
+
+
+class TemplateSection(BaseModel):
+    """Section in a story template."""
+
+    name: str = Field(description="Section name")
+    format: str = Field(description="Section format (gherkin, free_form, etc.)")
+    min_items: Optional[int] = Field(None, description="Minimum required items")
+
+
+class TemplateSchema(BaseModel):
+    """Parsed template schema."""
+
+    required_fields: List[str] = Field(default_factory=list)
+    optional_fields: List[str] = Field(default_factory=list)
+    format_style: str = Field(description="Template format style")
+    sections: List[TemplateSection] = Field(default_factory=list)
+
+
+class IntentExtraction(BaseModel):
+    """Intent extraction for knowledge retrieval."""
+
+    feature: Optional[str] = Field(None, description="Primary feature or capability")
+    integration: Optional[str] = Field(None, description="Integration or external system")
+    domain: Optional[str] = Field(None, description="Domain classification")
+    user_type: Optional[str] = Field(None, description="User persona or role")
+    keywords: List[str] = Field(default_factory=list, description="Search keywords")
+
+
+class RetrievedDecision(BaseModel):
+    """Decision retrieved from knowledge sources."""
+
+    id: Optional[str] = Field(None, description="Decision identifier if known")
+    text: str = Field(description="Decision text")
+    source: str = Field(description="Source reference")
+    confidence: float = Field(ge=0.0, le=1.0, description="Decision confidence")
+
+
+class RetrievedConstraint(BaseModel):
+    """Constraint retrieved from knowledge sources."""
+
+    id: Optional[str] = Field(None, description="Constraint identifier if known")
+    text: str = Field(description="Constraint text")
+    source: str = Field(description="Source reference")
+
+
+class RetrievedDoc(BaseModel):
+    """Relevant document snippet."""
+
+    title: str = Field(description="Document title")
+    excerpt: str = Field(description="Relevant excerpt")
+    source: str = Field(description="Source reference")
+    relevance: float = Field(ge=0.0, le=1.0, description="Relevance score")
+
+
+class CodeContextSnippet(BaseModel):
+    """Relevant code context snippet."""
+
+    file: str = Field(description="File path")
+    snippet: str = Field(description="Code snippet")
+    note: Optional[str] = Field(None, description="Additional note")
+
+
+class RetrievedContext(BaseModel):
+    """Aggregated retrieved context across sources."""
+
+    decisions: List[RetrievedDecision] = Field(default_factory=list)
+    constraints: List[RetrievedConstraint] = Field(default_factory=list)
+    relevant_docs: List[RetrievedDoc] = Field(default_factory=list)
+    code_context: List[CodeContextSnippet] = Field(default_factory=list)
+
+
+class AcceptanceCriteriaItem(BaseModel):
+    """Acceptance criteria entry."""
+
+    type: Literal["gherkin", "free_form"] = Field(description="AC format type")
+    scenario: Optional[str] = Field(None, description="Scenario title for gherkin")
+    given: Optional[str] = Field(None, description="Given clause")
+    when: Optional[str] = Field(None, description="When clause")
+    then: Optional[str] = Field(None, description="Then clause")
+    text: Optional[str] = Field(None, description="Free-form acceptance criterion")
+
+
+class PopulatedStory(BaseModel):
+    """Populated story based on template and context."""
+
+    title: str = Field(description="Story title")
+    description: str = Field(description="Story description")
+    acceptance_criteria: List[AcceptanceCriteriaItem] = Field(default_factory=list)
+    dependencies: List[str] = Field(default_factory=list)
+    nfrs: List[str] = Field(default_factory=list)
+    out_of_scope: List[str] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    open_questions: List[str] = Field(default_factory=list)
+
+
+class PopulatedStoryDraft(BaseModel):
+    """Loose LLM output for populated story."""
+
+    title: str = Field(description="Story title")
+    description: str = Field(description="Story description")
+    acceptance_criteria: Union[List[AcceptanceCriteriaItem], List[str], str] = Field(
+        default_factory=list
+    )
+    dependencies: Union[List[str], str] = Field(default_factory=list)
+    nfrs: Union[List[str], str] = Field(default_factory=list)
+    out_of_scope: Union[List[str], str] = Field(default_factory=list)
+    assumptions: Union[List[str], str] = Field(default_factory=list)
+    open_questions: Union[List[str], str] = Field(default_factory=list)
+
+
+class InvestScore(BaseModel):
+    """INVEST scoring results."""
+
+    independent: bool
+    negotiable: bool
+    valuable: bool
+    estimable: bool
+    small: bool
+    testable: bool
+    overall: Literal["pass", "warning", "fail"]
+
+
+class ValidationIssue(BaseModel):
+    """Validation issue entry."""
+
+    severity: Literal["warning", "error"] = Field(description="Issue severity")
+    type: str = Field(description="Issue type")
+    message: str = Field(description="Issue description")
+    suggestion: Optional[str] = Field(None, description="Suggested fix")
+
+
+class ValidationGap(BaseModel):
+    """Validation gap entry."""
+
+    field: str = Field(description="Field with gap")
+    gap: str = Field(description="Gap description")
+    suggestion: Optional[str] = Field(None, description="Suggested fix")
+
+
+class TechnicalRisk(BaseModel):
+    """Technical risk entry."""
+
+    risk: str = Field(description="Risk description")
+    mitigation: Optional[str] = Field(None, description="Mitigation suggestion")
+
+
+class ValidationResults(BaseModel):
+    """Validation and gap detection results."""
+
+    invest_score: InvestScore
+    issues: List[ValidationIssue] = Field(default_factory=list)
+    gaps: List[ValidationGap] = Field(default_factory=list)
+    ungrounded_claims: List[str] = Field(default_factory=list)
+    technical_risks: List[TechnicalRisk] = Field(default_factory=list)
+
+
+class ValidationResultsDraft(BaseModel):
+    """Loose LLM output for validation results."""
+
+    invest_score: Dict[str, Any] = Field(default_factory=dict)
+    issues: List[Any] = Field(default_factory=list)
+    gaps: List[Any] = Field(default_factory=list)
+    ungrounded_claims: List[Any] = Field(default_factory=list)
+    technical_risks: List[Any] = Field(default_factory=list)
+
+
+class OrchestratorDecision(BaseModel):
+    """Routing decision for story writing orchestrator."""
+
+    next_action: Literal[
+        "epic_analysis",
+        "splitting_strategy",
+        "story_generation",
+        "template_parser",
+        "knowledge_retrieval",
+        "story_writer",
+        "validation",
+        "critique_loop",
+        "end",
+    ]
+    reasoning: str = Field(description="Explanation for routing decision")
+
+
+class IntegrationDetail(BaseModel):
+    """Detail entry for an integration."""
+
+    label: str = Field(description="Detail label")
+    value: str = Field(description="Detail value")
+
+
+class IntegrationInfo(BaseModel):
+    """Summary information for an integration."""
+
+    name: str = Field(description="Integration display name")
+    status: Literal["connected", "not_connected", "error"] = Field(description="Connection status")
+    action: str = Field(description="Primary action label")
+    action_type: Literal["connect", "scopes", "workspace", "repos"] = Field(
+        description="Primary action type"
+    )
+    details: List[IntegrationDetail] = Field(default_factory=list)
+    footer_action: Optional[str] = Field(None, description="Optional footer action label")
+
+
+class IntegrationConnectRequest(BaseModel):
+    """Request to connect an integration."""
+
+    token: Optional[str] = Field(None, description="OAuth token or API key")
+
+
+class IntegrationScopeUpdate(BaseModel):
+    """Request to update integration scopes."""
+
+    scopes: List[str] = Field(default_factory=list, description="Allowed projects or scopes")
+
+
+class IntegrationTestResult(BaseModel):
+    """Result for testing an integration connection."""
+
+    success: bool = Field(description="Test result")
+    message: str = Field(description="Result message")

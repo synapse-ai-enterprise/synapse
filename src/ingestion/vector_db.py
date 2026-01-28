@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 from src.config import settings
 from src.domain.interfaces import IKnowledgeBase
 from src.domain.schema import UASKnowledgeUnit
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class LanceDBAdapter(IKnowledgeBase):
@@ -46,15 +49,29 @@ class LanceDBAdapter(IKnowledgeBase):
 
         table_name = "knowledge_base"
 
+        embedding_dim = self._get_embedding_dim()
+
         # Check if table exists
         if table_name in self.db.table_names():
             self.table = self.db.open_table(table_name)
-        else:
-            # Determine embedding dimension dynamically by generating a test embedding
-            # This ensures the schema matches the actual embedding model
-            test_embedding = self.embedding_fn("test")
-            embedding_dim = len(test_embedding) if test_embedding else 384  # Default to 384 if test fails
-            
+            existing_dim = self._get_table_vector_dim(self.table)
+            if existing_dim and embedding_dim and existing_dim != embedding_dim:
+                logger.warning(
+                    "vector_dimension_mismatch",
+                    existing_dim=existing_dim,
+                    new_dim=embedding_dim,
+                    action="recreate_table",
+                )
+                try:
+                    self.db.drop_table(table_name)
+                except Exception as exc:
+                    logger.warning(
+                        "vector_table_drop_failed",
+                        error=str(exc),
+                        table=table_name,
+                    )
+                self.table = None
+        if self.table is None:
             # Create schema for knowledge base
             schema = pa.schema(
                 [
@@ -73,6 +90,28 @@ class LanceDBAdapter(IKnowledgeBase):
             self.table = self.db.create_table(table_name, schema=schema, mode="overwrite")
 
         self._initialized = True
+        logger.info("vector_db_initialized", table=table_name, embedding_dim=embedding_dim)
+
+    def _get_embedding_dim(self) -> int:
+        try:
+            test_embedding = self.embedding_fn("test")
+            if test_embedding:
+                return len(test_embedding)
+        except Exception as exc:
+            logger.warning("embedding_dim_probe_failed", error=str(exc))
+        return 384
+
+    @staticmethod
+    def _get_table_vector_dim(table: "Table") -> Optional[int]:
+        try:
+            vector_field = table.schema.field("vector")
+        except Exception:
+            return None
+        vector_type = vector_field.type
+        list_size = getattr(vector_type, "list_size", None)
+        if isinstance(list_size, int) and list_size > 0:
+            return list_size
+        return None
 
     async def search(
         self,

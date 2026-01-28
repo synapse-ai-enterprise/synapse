@@ -67,3 +67,8 @@ poetry.lock
 
 # Redis dump
 dump.rdb
+
+/*/node_modules
+
+*.pid
+*.log

@@ -32,19 +32,28 @@ agentic-poc/
 └── tests/                   # Test suite
 ```
 
-## Quick Start (Demo)
+## Quick Start (Local UI + API)
 
-For a quick demonstration setup:
+Use the startup scripts to run the backend API and Vite UI together.
 
+### Option A: Standard local startup
 ```bash
-# Run automated setup script
-./scripts/setup_demo.sh
-
-# Or manually:
-poetry install
-cp .env.example .env  # Edit .env and add OPENAI_API_KEY
-poetry run python scripts/demo.py
+./scripts/start_ui_backend.sh
 ```
+
+### Option B: Local-only (fast iteration)
+```bash
+./scripts/start_local_ui_backend.sh
+```
+
+Both scripts:
+- start the API on `http://localhost:8000`
+- start the UI on `http://localhost:5173`
+- write logs to `.backend.log` and `.frontend.log`
+
+**Environment files:**
+- `.env` is loaded by default
+- `.env.local` is also supported (recommended for local secrets)
 
 ## Setup
 
@@ -77,6 +86,8 @@ VECTOR_STORE_PATH=./data/lancedb
 EOF
 ```
 
+You can also place secrets in `.env.local` to avoid committing them.
+
 3. **Verify installation:**
 ```bash
 poetry run python tests/test_smoke.py
@@ -93,10 +104,9 @@ poetry run python scripts/demo.py
 poetry run python scripts/ingest_knowledge.py
 ```
 
-6. **Start webhook server:**
+6. **Start the API + UI:**
 ```bash
-poetry run python -m src.main
-# Server runs on http://localhost:8000
+./scripts/start_ui_backend.sh
 ```
 
 ## Demo Scenarios
@@ -142,7 +152,18 @@ http://your-server:8000/webhooks/issue-tracker
 
 ## Development
 
+### Current MVP (Story Detailing)
+- UI supports Story Detailing flow with workflow progress streaming.
+- Admin Console supports Templates (User Story), Integrations (Jira + Confluence), and Models & Agents.
+- Audit & Governance is marked Coming Soon.
+
+See `docs/Implementation/MVP_STORY_DETAILING.md` and `docs/Implementation/IMPLEMENTATION_STATUS.md`.
+
 See `.cursorrules` for architectural standards and coding guidelines.
+
+## Deployment
+
+Vercel deployment instructions are available in `docs/DEPLOYMENT_VERCEL.md`.
 
 ## License
 

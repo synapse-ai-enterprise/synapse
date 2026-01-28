@@ -1,8 +1,16 @@
 """Port interfaces using Python Protocol for structural subtyping."""
 
-from typing import Dict, List, Literal, Mapping, Optional, Protocol
+from typing import Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 
-from src.domain.schema import CoreArtifact, OptimizationRequest, UASKnowledgeUnit
+from src.domain.schema import (
+    CoreArtifact,
+    DomainEvent,
+    MemoryItem,
+    MemoryScope,
+    MemoryTier,
+    OptimizationRequest,
+    UASKnowledgeUnit,
+)
 
 
 class IIssueTracker(Protocol):
@@ -92,6 +100,57 @@ class IOptimizationRequest(Protocol):
 
     async def handle_request(self, request: OptimizationRequest) -> None:
         """Process an optimization request."""
+        ...
+
+
+class IEventBus(Protocol):
+    """Port for publishing domain events."""
+
+    async def publish(self, event: DomainEvent) -> None:
+        """Publish a single domain event."""
+        ...
+
+    async def publish_many(self, events: List[DomainEvent]) -> None:
+        """Publish multiple domain events."""
+        ...
+
+    async def subscribe(
+        self,
+        event_type: str,
+        handler: Callable[[DomainEvent], Awaitable[None]],
+    ) -> None:
+        """Subscribe a handler to an event type."""
+        ...
+
+
+class IMemoryStore(Protocol):
+    """Port for agent memory storage."""
+
+    async def write(self, item: MemoryItem) -> None:
+        """Persist a memory item."""
+        ...
+
+    async def read(
+        self,
+        tier: MemoryTier,
+        scope: MemoryScope,
+        key: str,
+    ) -> Optional[MemoryItem]:
+        """Read a memory item by key."""
+        ...
+
+    async def search(
+        self,
+        query: str,
+        tier: Optional[MemoryTier] = None,
+        scope: Optional[MemoryScope] = None,
+        limit: int = 10,
+    ) -> List[MemoryItem]:
+        """Search memory items by query."""
+        ...
+
+    async def delete(self, tier: MemoryTier, scope: MemoryScope, key: str) -> bool:
+        """Delete a memory item by key."""
         ...
 
 

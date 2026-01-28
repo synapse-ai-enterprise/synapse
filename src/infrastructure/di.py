@@ -4,8 +4,19 @@ import importlib
 from typing import Callable, Optional
 
 from src.adapters.llm.litellm_adapter import LiteLLMAdapter
+from src.application.workflows.registry import WorkflowRegistry
 from src.config import settings
-from src.domain.interfaces import IKnowledgeBase, IIssueTracker, ILLMProvider, IWebhookIngress
+from src.domain.interfaces import (
+    IEventBus,
+    IKnowledgeBase,
+    ILLMProvider,
+    IMemoryStore,
+    IIssueTracker,
+    IWebhookIngress,
+)
+from src.infrastructure.admin_store import AdminStore
+from src.infrastructure.messaging.event_bus import InMemoryEventBus
+from src.infrastructure.memory.in_memory_store import InMemoryStore
 from src.ingestion.vector_db import LanceDBAdapter
 
 
@@ -41,6 +52,10 @@ class DIContainer:
         self._knowledge_base: Optional[IKnowledgeBase] = None
         self._llm_provider: Optional[ILLMProvider] = None
         self._webhook_ingress: Optional[IWebhookIngress] = None
+        self._admin_store: Optional[AdminStore] = None
+        self._event_bus: Optional[IEventBus] = None
+        self._memory_store: Optional[IMemoryStore] = None
+        self._workflow_registry: Optional[WorkflowRegistry] = None
 
     def get_issue_tracker(self) -> IIssueTracker:
         """Get issue tracker adapter.
@@ -100,6 +115,34 @@ class DIContainer:
             adapter_cls = _load_adapter_class(adapter_path)
             self._webhook_ingress = adapter_cls()
         return self._webhook_ingress
+
+    def get_admin_store(self) -> AdminStore:
+        """Get admin configuration store.
+
+        Returns:
+            AdminStore instance.
+        """
+        if self._admin_store is None:
+            self._admin_store = AdminStore()
+        return self._admin_store
+
+    def get_event_bus(self) -> IEventBus:
+        """Get event bus instance."""
+        if self._event_bus is None:
+            self._event_bus = InMemoryEventBus()
+        return self._event_bus
+
+    def get_memory_store(self) -> IMemoryStore:
+        """Get memory store instance."""
+        if self._memory_store is None:
+            self._memory_store = InMemoryStore()
+        return self._memory_store
+
+    def get_workflow_registry(self) -> WorkflowRegistry:
+        """Get workflow registry instance."""
+        if self._workflow_registry is None:
+            self._workflow_registry = WorkflowRegistry()
+        return self._workflow_registry
 
 
 # Global container instance

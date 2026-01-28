@@ -4,8 +4,10 @@ from typing import Any, Dict, Optional
 
 from src.cognitive_engine.graph import create_cognitive_graph
 from src.cognitive_engine.state import CognitiveState
+from src.cognitive_engine.story_graph import create_story_writing_graph
+from src.cognitive_engine.story_state import StoryWritingState
 from src.domain.interfaces import IKnowledgeBase, IIssueTracker, ILLMProvider, IProgressCallback
-from src.domain.schema import OptimizationRequest
+from src.domain.schema import OptimizationRequest, StoryWritingRequest
 
 
 class OptimizeArtifactUseCase:
@@ -97,3 +99,53 @@ class OptimizeArtifactUseCase:
                 "traceback": traceback.format_exc(),
             }
             return error_details
+
+
+class StoryWritingUseCase:
+    """Use case for Product Story Writing workflow."""
+
+    def __init__(
+        self,
+        knowledge_base: IKnowledgeBase,
+        llm_provider: ILLMProvider,
+        progress_callback: Optional[IProgressCallback] = None,
+    ):
+        self.knowledge_base = knowledge_base
+        self.llm_provider = llm_provider
+        self.progress_callback = progress_callback
+
+    async def execute(self, request: StoryWritingRequest) -> Dict[str, Any]:
+        """Execute the story writing workflow."""
+        try:
+            graph = create_story_writing_graph(
+                knowledge_base=self.knowledge_base,
+                llm_provider=self.llm_provider,
+            )
+
+            initial_state = StoryWritingState(request=request)
+            state_dict = initial_state.model_dump()
+
+            if self.progress_callback:
+                final_state_dict = None
+                async for event in graph.astream(state_dict):
+                    for node_name, node_state in event.items():
+                        if node_name != "__end__":
+                            await self.progress_callback.on_node_start(node_name, node_state)
+                            await self.progress_callback.on_node_complete(node_name, node_state)
+                            final_state_dict = node_state
+                if final_state_dict is None:
+                    final_state_dict = await graph.ainvoke(state_dict)
+            else:
+                final_state_dict = await graph.ainvoke(state_dict)
+
+            return {
+                "success": True,
+                "final_state": final_state_dict,
+            }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }

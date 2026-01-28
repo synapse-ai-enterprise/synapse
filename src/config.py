@@ -1,5 +1,7 @@
 """Configuration management using Pydantic Settings."""
 
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,7 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", ".env.local"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Model Configuration
     # LiteLLM supports many providers - just change the model name!
@@ -29,6 +35,9 @@ class Settings(BaseSettings):
     linear_webhook_secret: str = ""
     github_token: str = ""
     notion_token: str = ""
+    jira_token: str = ""
+    confluence_token: str = ""
+    sharepoint_token: str = ""
 
     # Providers
     issue_tracker_provider: str = "linear"
@@ -53,6 +62,9 @@ class Settings(BaseSettings):
     github_repo: str = ""
     notion_root_page_id: str = ""
     linear_team_id: str = ""
+    jira_project_keys: str = ""
+    confluence_space_keys: str = ""
+    sharepoint_site_name: str = ""
 
     # Deployment Mode
     dry_run: bool = False
@@ -75,6 +87,14 @@ class Settings(BaseSettings):
     # Observability
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
     enable_tracing: bool = True
+    cors_origins: str = ""
+
+    def model_post_init(self, __context) -> None:
+        """Apply deployment-specific defaults."""
+        if os.getenv("VERCEL") and self.vector_store_path == "./data/lancedb":
+            self.vector_store_path = "/tmp/lancedb"
+        if os.getenv("VERCEL") and self.embedding_model.startswith("local/"):
+            self.embedding_model = "text-embedding-3-small"
 
 
 settings = Settings()
