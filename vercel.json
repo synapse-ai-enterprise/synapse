@@ -5,10 +5,9 @@
     {
       "src": "ui/package.json",
       "use": "@vercel/static-build",
-      "config": { "distDir": "ui/dist" }
+      "config": { "distDir": "dist" }
     }
   ],
-  "outputDirectory": "ui/dist",
   "routes": [
     { "src": "/api/(.*)", "dest": "api/index.py" },
     { "src": "/(.*)", "dest": "ui/dist/$1" }
