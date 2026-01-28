@@ -8,6 +8,7 @@
       "config": { "distDir": "ui/dist" }
     }
   ],
+  "outputDirectory": "ui/dist",
   "routes": [
     { "src": "/api/(.*)", "dest": "api/index.py" },
     { "src": "/(.*)", "dest": "ui/dist/$1" }
