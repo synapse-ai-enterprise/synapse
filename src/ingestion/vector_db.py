@@ -1,14 +1,9 @@
-"""LanceDB Adapter implementing IKnowledgeBase."""
+"""Knowledge base adapters implementing IKnowledgeBase."""
 
 import asyncio
+import math
 from datetime import datetime
-from typing import Callable, List, Literal, Optional
-
-import lancedb
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from lancedb.table import Table
+from typing import Callable, List, Literal, Optional, TYPE_CHECKING
 
 from src.config import settings
 from src.domain.interfaces import IKnowledgeBase
@@ -28,7 +23,7 @@ class LanceDBAdapter(IKnowledgeBase):
             embedding_fn: Function that takes text and returns embedding vector.
         """
         self.embedding_fn = embedding_fn
-        self.db: Optional[lancedb.DBConnection] = None
+        self.db = None
         self.table: Optional["Table"] = None
         self._initialized = False
 
@@ -43,6 +38,7 @@ class LanceDBAdapter(IKnowledgeBase):
 
     def _initialize_db_sync(self) -> None:
         """Synchronous initialization of LanceDB."""
+        import lancedb
         import pyarrow as pa
 
         self.db = lancedb.connect(settings.vector_store_path)
@@ -198,8 +194,6 @@ class LanceDBAdapter(IKnowledgeBase):
         )
 
         # Prepare data for insertion
-        import pandas as pd
-
         data = []
         current_timestamp = datetime.now().timestamp()
 
@@ -218,7 +212,86 @@ class LanceDBAdapter(IKnowledgeBase):
                 }
             )
 
-        df = pd.DataFrame(data)
-
         # Upsert to table
-        await loop.run_in_executor(None, self.table.add, df)
+        await loop.run_in_executor(None, self.table.add, data)
+
+
+class InMemoryKnowledgeBase(IKnowledgeBase):
+    """In-memory knowledge base for lightweight deployments."""
+
+    def __init__(self, embedding_fn: Callable[[str], List[float]]):
+        """Initialize adapter with embedding function."""
+        self.embedding_fn = embedding_fn
+        self._documents: list[dict] = []
+
+    async def search(
+        self,
+        query: str,
+        source: Optional[Literal["github", "notion"]] = None,
+        limit: int = 10,
+    ) -> List[UASKnowledgeUnit]:
+        """Search knowledge base using cosine similarity."""
+        query_vector = await asyncio.get_event_loop().run_in_executor(
+            None, self.embedding_fn, query
+        )
+        if not query_vector:
+            raise ValueError(f"Embedding function returned empty vector for query: {query[:100]}")
+
+        def cosine_similarity(a: list[float], b: list[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(y * y for y in b))
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return dot / (norm_a * norm_b)
+
+        candidates = []
+        for row in self._documents:
+            if source and row["source"] != source:
+                continue
+            score = cosine_similarity(query_vector, row["vector"])
+            candidates.append((score, row))
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+
+        results = []
+        for _, row in candidates[:limit]:
+            results.append(
+                UASKnowledgeUnit(
+                    id=row["id"],
+                    content=row["text"],
+                    summary=row.get("summary", ""),
+                    source=row["source"],
+                    last_updated=row.get("last_updated", ""),
+                    topics=row.get("topics", []),
+                    location=row["location"],
+                )
+            )
+        return results
+
+    async def add_documents(self, documents: List[UASKnowledgeUnit]) -> None:
+        """Add documents to the in-memory knowledge base."""
+        if not documents:
+            return
+
+        loop = asyncio.get_event_loop()
+        texts = [doc.content for doc in documents]
+        embeddings = await loop.run_in_executor(
+            None, lambda: [self.embedding_fn(text) for text in texts]
+        )
+
+        current_timestamp = datetime.now().timestamp()
+        for doc, embedding in zip(documents, embeddings):
+            self._documents.append(
+                {
+                    "id": doc.id,
+                    "vector": embedding,
+                    "text": doc.content,
+                    "summary": doc.summary,
+                    "source": doc.source,
+                    "location": doc.location,
+                    "last_updated": doc.last_updated,
+                    "topics": doc.topics,
+                    "timestamp": current_timestamp,
+                }
+            )

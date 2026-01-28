@@ -73,6 +73,7 @@ class Settings(BaseSettings):
 
     # Vector Store
     vector_store_path: str = "./data/lancedb"
+    knowledge_base_backend: str = "lancedb"
     # Embedding model - LiteLLM supports many providers:
     # - OpenAI: text-embedding-3-small, text-embedding-ada-002 (requires OPENAI_API_KEY)
     # - Local: local/all-MiniLM-L6-v2 (uses sentence-transformers, no API key needed)
@@ -93,6 +94,8 @@ class Settings(BaseSettings):
         """Apply deployment-specific defaults."""
         if os.getenv("VERCEL") and self.vector_store_path == "./data/lancedb":
             self.vector_store_path = "/tmp/lancedb"
+        if os.getenv("VERCEL"):
+            self.knowledge_base_backend = "memory"
         if os.getenv("VERCEL") and self.embedding_model.startswith("local/"):
             self.embedding_model = "text-embedding-3-small"
 

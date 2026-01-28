@@ -17,7 +17,7 @@ from src.domain.interfaces import (
 from src.infrastructure.admin_store import AdminStore
 from src.infrastructure.messaging.event_bus import InMemoryEventBus
 from src.infrastructure.memory.in_memory_store import InMemoryStore
-from src.ingestion.vector_db import LanceDBAdapter
+from src.ingestion.vector_db import InMemoryKnowledgeBase, LanceDBAdapter
 
 
 def _load_adapter_class(adapter_path: str) -> type:
@@ -84,7 +84,10 @@ class DIContainer:
             LanceDBAdapter instance.
         """
         if self._knowledge_base is None:
-            self._knowledge_base = LanceDBAdapter(embedding_fn)
+            if settings.knowledge_base_backend == "memory":
+                self._knowledge_base = InMemoryKnowledgeBase(embedding_fn)
+            else:
+                self._knowledge_base = LanceDBAdapter(embedding_fn)
             # Note: initialize_db() must be awaited by the caller
             # Cannot use asyncio.run() here as it may be called from async context
         return self._knowledge_base
