@@ -1,14 +1,19 @@
 """Port interfaces using Python Protocol for structural subtyping."""
 
-from typing import Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Protocol
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Mapping, Optional, Protocol
 
 from src.domain.schema import (
     CoreArtifact,
+    ContextGraphSnapshot,
     DomainEvent,
     MemoryItem,
     MemoryScope,
     MemoryTier,
     OptimizationRequest,
+    PromptCategory,
+    PromptExecutionRecord,
+    PromptLibrarySummary,
+    PromptTemplate,
     UASKnowledgeUnit,
 )
 
@@ -39,7 +44,7 @@ class IKnowledgeBase(Protocol):
     async def search(
         self,
         query: str,
-        source: Optional[Literal["github", "notion"]] = None,
+        source: Optional[str] = None,
         limit: int = 10,
     ) -> List[UASKnowledgeUnit]:
         """Search the knowledge base. Filter by source if provided."""
@@ -154,6 +159,18 @@ class IMemoryStore(Protocol):
         ...
 
 
+class IContextGraphStore(Protocol):
+    """Port for context graph snapshot storage."""
+
+    async def write(self, snapshot: ContextGraphSnapshot) -> None:
+        """Persist a context graph snapshot."""
+        ...
+
+    async def read(self, story_id: str) -> Optional[ContextGraphSnapshot]:
+        """Read a context graph snapshot by story id."""
+        ...
+
+
 class IProgressCallback(Protocol):
     """Port for progress callbacks during workflow execution."""
 
@@ -181,5 +198,177 @@ class IProgressCallback(Protocol):
         Args:
             iteration: Current iteration number.
             state: Current state dictionary with debate history.
+        """
+        ...
+
+
+class IPromptLibrary(Protocol):
+    """Port for prompt library operations.
+    
+    The Prompt Library provides centralized management of prompt templates with:
+    - Version control and rollback
+    - Model-specific variants
+    - Performance-based prompt selection
+    - A/B testing capabilities
+    - Collaborative editing
+    """
+
+    async def get_prompt(
+        self,
+        prompt_id: str,
+        version: Optional[str] = None,
+    ) -> Optional[PromptTemplate]:
+        """Get a prompt template by ID.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            version: Specific version to retrieve (defaults to current).
+            
+        Returns:
+            PromptTemplate if found, None otherwise.
+        """
+        ...
+
+    async def get_prompt_for_agent(
+        self,
+        agent_type: str,
+        task: str,
+        model: Optional[str] = None,
+    ) -> Optional[PromptTemplate]:
+        """Get the best prompt for an agent and task.
+        
+        Args:
+            agent_type: Agent type (e.g., 'po_agent', 'qa_agent').
+            task: Task identifier (e.g., 'critique', 'synthesize').
+            model: Target model for variant selection.
+            
+        Returns:
+            Best matching PromptTemplate, None if not found.
+        """
+        ...
+
+    async def render_prompt(
+        self,
+        prompt_id: str,
+        model: str,
+        variables: Dict[str, Any],
+        version: Optional[str] = None,
+    ) -> str:
+        """Render a prompt with variable substitution.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            model: Target model for variant selection.
+            variables: Variable values to substitute.
+            version: Specific version to use (defaults to current).
+            
+        Returns:
+            Rendered prompt string.
+            
+        Raises:
+            ValueError: If prompt not found or required variable missing.
+        """
+        ...
+
+    async def list_prompts(
+        self,
+        category: Optional[PromptCategory] = None,
+        agent_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> List[PromptTemplate]:
+        """List prompts with optional filtering.
+        
+        Args:
+            category: Filter by category.
+            agent_type: Filter by agent type.
+            tags: Filter by tags (any match).
+            
+        Returns:
+            List of matching PromptTemplates.
+        """
+        ...
+
+    async def save_prompt(self, prompt: PromptTemplate) -> None:
+        """Save or update a prompt template.
+        
+        Args:
+            prompt: PromptTemplate to save.
+        """
+        ...
+
+    async def delete_prompt(self, prompt_id: str) -> bool:
+        """Delete a prompt template.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            
+        Returns:
+            True if deleted, False if not found.
+        """
+        ...
+
+    async def add_version(
+        self,
+        prompt_id: str,
+        version: str,
+        template: str,
+        changelog: Optional[str] = None,
+        set_active: bool = True,
+    ) -> bool:
+        """Add a new version to a prompt template.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            version: New version string.
+            template: Template text.
+            changelog: Description of changes.
+            set_active: Whether to set as current version.
+            
+        Returns:
+            True if version added, False if prompt not found.
+        """
+        ...
+
+    async def rollback_version(self, prompt_id: str, version: str) -> bool:
+        """Rollback to a previous prompt version.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            version: Version to rollback to.
+            
+        Returns:
+            True if rolled back, False if prompt or version not found.
+        """
+        ...
+
+    async def record_execution(self, record: PromptExecutionRecord) -> None:
+        """Record a prompt execution for monitoring.
+        
+        Args:
+            record: Execution record with metrics.
+        """
+        ...
+
+    async def get_summary(self) -> PromptLibrarySummary:
+        """Get summary statistics for the prompt library.
+        
+        Returns:
+            PromptLibrarySummary with aggregate metrics.
+        """
+        ...
+
+    async def select_ab_variant(
+        self,
+        prompt_id: str,
+        session_id: Optional[str] = None,
+    ) -> str:
+        """Select a version based on A/B test configuration.
+        
+        Args:
+            prompt_id: Unique prompt identifier.
+            session_id: Session ID for consistent selection.
+            
+        Returns:
+            Selected version string.
         """
         ...

@@ -13,9 +13,11 @@ from src.domain.interfaces import (
     IMemoryStore,
     IIssueTracker,
     IWebhookIngress,
+    IContextGraphStore,
 )
 from src.infrastructure.admin_store import AdminStore
 from src.infrastructure.messaging.event_bus import InMemoryEventBus
+from src.infrastructure.memory.context_graph_store import InMemoryContextGraphStore
 from src.infrastructure.memory.in_memory_store import InMemoryStore
 from src.ingestion.vector_db import InMemoryKnowledgeBase, LanceDBAdapter
 
@@ -55,6 +57,7 @@ class DIContainer:
         self._admin_store: Optional[AdminStore] = None
         self._event_bus: Optional[IEventBus] = None
         self._memory_store: Optional[IMemoryStore] = None
+        self._context_graph_store: Optional[IContextGraphStore] = None
         self._workflow_registry: Optional[WorkflowRegistry] = None
 
     def get_issue_tracker(self) -> IIssueTracker:
@@ -140,6 +143,12 @@ class DIContainer:
         if self._memory_store is None:
             self._memory_store = InMemoryStore()
         return self._memory_store
+
+    def get_context_graph_store(self) -> IContextGraphStore:
+        """Get context graph store instance."""
+        if self._context_graph_store is None:
+            self._context_graph_store = InMemoryContextGraphStore()
+        return self._context_graph_store
 
     def get_workflow_registry(self) -> WorkflowRegistry:
         """Get workflow registry instance."""

@@ -1,15 +1,39 @@
-"""Developer Agent - The Realist (Technical Feasibility Validator)."""
+"""Developer Agent - The Realist (Technical Feasibility Validator).
+
+FIXES APPLIED (Feb 5, 2026):
+- Issue 3: Added error handling around LLM calls with structured logging
+- Issue 7: Added observability with structured logging and tracing
+- Prompt Library Integration: Now fetches prompts dynamically from the Prompt Library
+"""
 
 from typing import Dict, List
 
 from src.domain.interfaces import ILLMProvider
 from src.domain.schema import CoreArtifact, FeasibilityAssessment, UASKnowledgeUnit
+from src.infrastructure.prompt_library import get_prompt_library
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class AgentError(Exception):
+    """Exception raised when an agent operation fails."""
+    pass
 
 
 class DeveloperAgent:
     """Developer Agent specializing in technical feasibility assessment."""
 
-    SYSTEM_PROMPT = """You are a Lead Developer Agent specializing in technical feasibility. Your role is to:
+    # Prompt ID for fetching from the library
+    PROMPT_ID = "developer_agent_system"
+
+    # Default fallback prompt (used if prompt library fetch fails)
+    DEFAULT_SYSTEM_PROMPT = """You are a Lead Developer Agent specializing in technical feasibility.
+
+CRITICAL: You MUST respond with a JSON object starting with { and ending with }.
+Do NOT return a list/array. Return a complete JSON object with ALL required fields.
+
+Your role is to:
 
 1. Assess technical feasibility:
    - Can this be implemented with current architecture?
@@ -43,6 +67,36 @@ Do not invent new files or features. If something is required but doesn't exist,
             llm_provider: LLM provider for generating assessments.
         """
         self.llm_provider = llm_provider
+        self._prompt_library = get_prompt_library()
+
+    async def _get_system_prompt(self) -> str:
+        """Fetch system prompt from the Prompt Library with fallback.
+        
+        Returns:
+            The system prompt template string.
+        """
+        try:
+            template = await self._prompt_library.get_prompt_template(self.PROMPT_ID)
+            if template:
+                logger.debug(
+                    "developer_agent.prompt_loaded",
+                    prompt_id=self.PROMPT_ID,
+                    source="prompt_library",
+                )
+                return template
+        except Exception as e:
+            logger.warning(
+                "developer_agent.prompt_load_failed",
+                prompt_id=self.PROMPT_ID,
+                error=str(e),
+            )
+        
+        logger.debug(
+            "developer_agent.prompt_loaded",
+            prompt_id=self.PROMPT_ID,
+            source="fallback",
+        )
+        return self.DEFAULT_SYSTEM_PROMPT
 
     async def assess_feasibility(
         self, artifact: CoreArtifact, context: List[UASKnowledgeUnit]
@@ -61,8 +115,11 @@ Do not invent new files or features. If something is required but doesn't exist,
 
         ac_text = "\n".join(f"- {ac}" for ac in artifact.acceptance_criteria) if artifact.acceptance_criteria else "None specified"
 
+        # Fetch prompt from library with fallback
+        system_prompt = await self._get_system_prompt()
+
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""Assess the technical feasibility of this artifact:
@@ -116,30 +173,81 @@ IMPORTANT: Use these EXACT field names:
             },
         ]
 
-        # Use structured output
-        assessment = await self.llm_provider.structured_completion(
-            messages=messages,
-            response_model=FeasibilityAssessment,
-            temperature=0.5,
+        # FIX Issue 3: Add error handling with retries
+        # FIX Issue 7: Add observability logging
+        logger.info(
+            "developer_agent.assess_feasibility.start",
+            artifact_id=artifact.source_id,
+            context_count=len(context),
         )
+        
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Use structured output
+                assessment = await self.llm_provider.structured_completion(
+                    messages=messages,
+                    response_model=FeasibilityAssessment,
+                    temperature=0.5,
+                )
 
-        # Convert to string format for backward compatibility
-        dependency_strings = [
-            f"{d.dependency_type}: {d.description}" + (" (BLOCKING)" if d.blocking else "")
-            for d in assessment.dependencies
-        ]
-        concern_strings = [
-            f"[{c.severity.upper()}] {c.description}" + (f" (Recommendation: {c.recommendation})" if c.recommendation else "")
-            for c in assessment.concerns
-        ]
+                # Convert to string format for backward compatibility
+                dependency_strings = [
+                    f"{d.dependency_type}: {d.description}" + (" (BLOCKING)" if d.blocking else "")
+                    for d in assessment.dependencies
+                ]
+                concern_strings = [
+                    f"[{c.severity.upper()}] {c.description}" + (f" (Recommendation: {c.recommendation})" if c.recommendation else "")
+                    for c in assessment.concerns
+                ]
 
-        return {
-            "feasibility": assessment.status,
-            "dependencies": dependency_strings,
-            "concerns": concern_strings,
-            "critique": assessment.assessment_text,
-            "confidence": assessment.confidence,
-        }
+                logger.info(
+                    "developer_agent.assess_feasibility.complete",
+                    artifact_id=artifact.source_id,
+                    feasibility=assessment.status,
+                    dependencies_count=len(dependency_strings),
+                    concerns_count=len(concern_strings),
+                    attempt=attempt + 1,
+                )
+
+                return {
+                    "feasibility": assessment.status,
+                    "dependencies": dependency_strings,
+                    "concerns": concern_strings,
+                    "critique": assessment.assessment_text,
+                    "confidence": assessment.confidence,
+                }
+                
+            except TimeoutError as e:
+                last_error = e
+                logger.warning(
+                    "developer_agent.assess_feasibility.timeout",
+                    artifact_id=artifact.source_id,
+                    attempt=attempt + 1,
+                )
+                if attempt < max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    "developer_agent.assess_feasibility.error",
+                    artifact_id=artifact.source_id,
+                    error=str(e),
+                    attempt=attempt + 1,
+                )
+                if attempt < max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+        
+        logger.error(
+            "developer_agent.assess_feasibility.failed",
+            artifact_id=artifact.source_id,
+            error=str(last_error),
+        )
+        raise AgentError(f"Assess feasibility failed after {max_retries} attempts: {last_error}")
 
     def _format_context(self, context: List[UASKnowledgeUnit]) -> str:
         """Format knowledge units as codebase context.

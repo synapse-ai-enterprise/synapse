@@ -1,4 +1,7 @@
-"""Story Writer Agent."""
+"""Story Writer Agent.
+
+Prompt Library Integration: Now fetches prompts dynamically from the Prompt Library
+"""
 
 from typing import List
 
@@ -10,22 +13,77 @@ from src.domain.schema import (
     RetrievedContext,
     TemplateSchema,
 )
+from src.infrastructure.prompt_library import get_prompt_library
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class StoryWriterAgent:
     """Agent for populating story templates with retrieved knowledge."""
 
-    SYSTEM_PROMPT = """You are a Story Writer Agent. Your role is to:
-1. Populate the provided template schema.
-2. Use retrieved context (decisions, constraints, docs, code).
-3. Write clear descriptions and actionable acceptance criteria.
-4. Identify dependencies, NFRs, scope, assumptions, and open questions.
-5. Do not invent facts; cite context from sources when possible.
+    # Prompt ID for fetching from the library
+    PROMPT_ID = "story_writer_agent_system"
 
-Return a JSON object matching the requested schema exactly."""
+    # Default fallback prompt (used if prompt library fetch fails)
+    DEFAULT_SYSTEM_PROMPT = """You are a Story Writer Agent. You MUST respond with a valid JSON object.
+
+Your role is to populate a story template with all required fields.
+
+CRITICAL: Your response must be a JSON object starting with { and ending with }.
+Do NOT return a list/array. Do NOT return just one field. Return ALL fields together.
+
+You must return a JSON object with this EXACT structure:
+{
+  "title": "Story title here",
+  "description": "Full story description here",
+  "acceptance_criteria": [
+    {"type": "gherkin", "scenario": "...", "given": "...", "when": "...", "then": "..."}
+  ],
+  "dependencies": ["dependency 1", "dependency 2"],
+  "nfrs": ["non-functional requirement 1"],
+  "out_of_scope": ["item not in scope"],
+  "assumptions": ["assumption 1"],
+  "open_questions": ["question 1"]
+}
+
+Rules:
+- Include ALL fields in your response, even if empty (use empty arrays [])
+- Use Gherkin format for acceptance_criteria
+- Cite sources with [source: <title>] in the description"""
 
     def __init__(self, llm_provider: ILLMProvider):
         self.llm_provider = llm_provider
+        self._prompt_library = get_prompt_library()
+
+    async def _get_system_prompt(self) -> str:
+        """Fetch system prompt from the Prompt Library with fallback.
+        
+        Returns:
+            The system prompt template string.
+        """
+        try:
+            template = await self._prompt_library.get_prompt_template(self.PROMPT_ID)
+            if template:
+                logger.debug(
+                    "story_writer_agent.prompt_loaded",
+                    prompt_id=self.PROMPT_ID,
+                    source="prompt_library",
+                )
+                return template
+        except Exception as e:
+            logger.warning(
+                "story_writer_agent.prompt_load_failed",
+                prompt_id=self.PROMPT_ID,
+                error=str(e),
+            )
+        
+        logger.debug(
+            "story_writer_agent.prompt_loaded",
+            prompt_id=self.PROMPT_ID,
+            source="fallback",
+        )
+        return self.DEFAULT_SYSTEM_PROMPT
 
     async def write(
         self,
@@ -33,24 +91,36 @@ Return a JSON object matching the requested schema exactly."""
         template_schema: TemplateSchema,
         context: RetrievedContext,
     ) -> PopulatedStory:
+        # Fetch prompt from library with fallback
+        system_prompt = await self._get_system_prompt()
+        
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"""Populate the story template using the retrieved context.
+                "content": f"""Write a detailed user story based on the following input.
 
-Story:
+INPUT STORY:
 {story_text}
 
-Template Schema:
-{template_schema.model_dump()}
-
-Retrieved Context:
+CONTEXT FROM KNOWLEDGE BASE:
 {context.model_dump()}
 
-Return a JSON object with:
-title, description, acceptance_criteria (gherkin or free_form),
-dependencies, nfrs, out_of_scope, assumptions, open_questions.
+IMPORTANT: Return a COMPLETE JSON object with ALL these fields:
+{{
+  "title": "A clear title for the story",
+  "description": "Detailed description of what the user wants to achieve",
+  "acceptance_criteria": [
+    {{"type": "gherkin", "scenario": "Scenario name", "given": "precondition", "when": "action", "then": "expected result"}}
+  ],
+  "dependencies": ["list any dependencies or empty array []"],
+  "nfrs": ["list non-functional requirements or empty array []"],
+  "out_of_scope": ["what is NOT included or empty array []"],
+  "assumptions": ["any assumptions made or empty array []"],
+  "open_questions": ["questions that need answers or empty array []"]
+}}
+
+Remember: Return ONE JSON object with ALL fields. Start with {{ and end with }}.
 """,
             },
         ]
@@ -85,14 +155,58 @@ dependencies, nfrs, out_of_scope, assumptions, open_questions.
         if isinstance(raw, list):
             items = []
             for entry in raw:
-                if isinstance(entry, AcceptanceCriteriaItem):
-                    items.append(entry)
-                elif isinstance(entry, dict):
-                    items.append(AcceptanceCriteriaItem(**entry))
-                else:
-                    items.append(AcceptanceCriteriaItem(type="free_form", text=str(entry)))
+                items.append(self._coerce_gherkin(entry))
             return items
-        return [AcceptanceCriteriaItem(type="free_form", text=str(raw))]
+        return [self._coerce_gherkin(raw)]
+
+    def _coerce_gherkin(self, entry) -> AcceptanceCriteriaItem:
+        """Coerce any acceptance criteria entry into Gherkin format."""
+        if isinstance(entry, AcceptanceCriteriaItem):
+            if entry.type == "gherkin":
+                return entry
+            return AcceptanceCriteriaItem(
+                type="gherkin",
+                scenario=entry.scenario or entry.text,
+                given=entry.given,
+                when=entry.when,
+                then=entry.then,
+            )
+        if isinstance(entry, dict):
+            data = dict(entry)
+            if data.get("type") != "gherkin":
+                data["type"] = "gherkin"
+                if not data.get("scenario") and data.get("text"):
+                    data["scenario"] = data.get("text")
+                data.pop("text", None)
+            return AcceptanceCriteriaItem(**data)
+        return self._gherkin_from_text(str(entry))
+
+    def _gherkin_from_text(self, text: str) -> AcceptanceCriteriaItem:
+        """Build a Gherkin item from a plain text entry."""
+        scenario = None
+        given = None
+        when = None
+        then = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            lower = stripped.lower()
+            if lower.startswith("scenario:"):
+                scenario = stripped.split(":", 1)[1].strip() or scenario
+            elif lower.startswith("given "):
+                given = stripped[6:].strip()
+            elif lower.startswith("when "):
+                when = stripped[5:].strip()
+            elif lower.startswith("then "):
+                then = stripped[5:].strip()
+        if not scenario:
+            scenario = text.strip() or "Scenario"
+        return AcceptanceCriteriaItem(
+            type="gherkin",
+            scenario=scenario,
+            given=given,
+            when=when,
+            then=then,
+        )
 
     def _normalize_list(self, value) -> List[str]:
         if value is None:

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     #   - Azure: azure/gpt-4 (set AZURE_API_KEY, AZURE_API_BASE env vars)
     #   - Ollama: ollama/llama3 (set ollama_base_url config)
     #   - And many more: https://docs.litellm.ai/docs/providers
-    litellm_model: str = "gpt-4-turbo-preview"
+    litellm_model: str = "ollama/llama3"
     
     # Legacy: kept for backward compatibility, but LiteLLM reads from env vars automatically
     openai_api_key: str = ""  # Prefer OPENAI_API_KEY env var
@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     github_token: str = ""
     notion_token: str = ""
     jira_token: str = ""
+    jira_user_email: str = ""
+    jira_base_url: str = ""
     confluence_token: str = ""
+    confluence_user_email: str = ""
+    confluence_base_url: str = ""
     sharepoint_token: str = ""
 
     # Providers
@@ -47,6 +51,7 @@ class Settings(BaseSettings):
     issue_tracker_adapters: dict[str, str] = Field(
         default_factory=lambda: {
             "linear": "src.adapters.egress.linear_egress:LinearEgressAdapter",
+            "jira": "src.adapters.egress.jira_egress:JiraEgressAdapter",
             "mock": "src.adapters.egress.mock_issue_tracker:MockIssueTracker",
         }
     )

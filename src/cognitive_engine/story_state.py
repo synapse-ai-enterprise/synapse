@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from src.domain.schema import (
+    ContextGraphSnapshot,
+    CoreArtifact,
+    EvidenceItem,
     EpicAnalysis,
     InvestViolation,
     PopulatedStory,
@@ -26,6 +29,9 @@ class StoryWritingState(BaseModel):
     generated_stories: List[StoryCandidate] = Field(default_factory=list)
     template_schema: Optional[TemplateSchema] = None
     retrieved_context: Optional[RetrievedContext] = None
+    evidence_items: List[EvidenceItem] = Field(default_factory=list)
+    context_graph: Optional[ContextGraphSnapshot] = None
+    field_references: Dict[str, List[str]] = Field(default_factory=dict)
     populated_story: Optional[PopulatedStory] = None
     refined_story: Optional[PopulatedStory] = None
     validation_results: Optional[ValidationResults] = None
@@ -33,11 +39,13 @@ class StoryWritingState(BaseModel):
     qa_confidence: Optional[float] = None
     qa_overall_assessment: Optional[str] = None
     structured_qa_violations: List[InvestViolation] = Field(default_factory=list)
+    invest_violations: List[str] = Field(default_factory=list)
     developer_critique: Optional[str] = None
     developer_confidence: Optional[float] = None
     developer_feasibility: Optional[str] = None
     developer_dependencies: List[str] = Field(default_factory=list)
     developer_concerns: List[str] = Field(default_factory=list)
     critique_history: List[Dict[str, Any]] = Field(default_factory=list)
+    proposed_artifacts: List[CoreArtifact] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)

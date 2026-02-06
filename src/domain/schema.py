@@ -69,10 +69,11 @@ class UASKnowledgeUnit(BaseModel):
     id: str
     content: str = Field(description="Markdown content")
     summary: str = Field(description="LLM-generated summary")
-    source: Literal["notion", "github"]
+    source: Literal["notion", "github", "jira", "confluence", "direct", "codebase"]
     last_updated: str  # ISO format datetime string
     topics: List[str] = Field(default_factory=list, description="Semantic tags derived during ingestion")
     location: str = Field(description="File path (GitHub) or Page URL (Notion)")
+    score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Similarity score from vector search")
 
 
 class UASSignal(BaseModel):
@@ -146,6 +147,27 @@ class ArtifactRefinement(BaseModel):
     description: str = Field(description="Refined description with clear value proposition")
     acceptance_criteria: List[str] = Field(description="Specific, testable acceptance criteria")
     rationale: Optional[str] = Field(None, description="Explanation of key changes made")
+
+
+class SplitArtifactItem(BaseModel):
+    """One artifact in a split proposal (multiple smaller stories from one large one)."""
+
+    title: str = Field(description="User story title for this artifact")
+    description: str = Field(description="Description for this artifact")
+    acceptance_criteria: List[str] = Field(description="Acceptance criteria for this artifact")
+    suggested_ref_suffix: Optional[str] = Field(
+        None,
+        description="Optional short label for traceability, e.g. Order, Frame, Glasses",
+    )
+
+
+class ArtifactSplitProposal(BaseModel):
+    """PO Agent output when proposing to split one large artifact into multiple smaller ones."""
+
+    artifacts: List[SplitArtifactItem] = Field(
+        description="List of smaller artifacts that together preserve original scope"
+    )
+    rationale: Optional[str] = Field(None, description="Why the split was proposed")
 
 
 class InvestViolation(BaseModel):
@@ -302,6 +324,7 @@ class SupervisorDecision(BaseModel):
         "synthesize",
         "validate",
         "execute",
+        "propose_split",
         "end"
     ] = Field(description="Next action to take in the workflow")
     reasoning: str = Field(description="Explanation for the routing decision")
@@ -336,6 +359,14 @@ class StoryWritingRequest(BaseModel):
     selected_techniques: List[str] = Field(default_factory=list, description="Chosen splitting techniques")
     story_text: Optional[str] = Field(None, description="Story text to detail")
     template_text: Optional[str] = Field(None, description="Story template text (if provided)")
+    retrieval_sources: List[str] = Field(
+        default_factory=list,
+        description="Preferred evidence sources (e.g., jira, confluence, github, notion, direct)",
+    )
+    direct_sources: List[str] = Field(
+        default_factory=list,
+        description="Direct URLs or source identifiers to include as evidence",
+    )
     project_id: Optional[str] = Field(None, description="Project identifier for context")
     requester_id: Optional[str] = Field(None, description="User identifier for preference lookup")
 
@@ -443,7 +474,65 @@ class RetrievedDoc(BaseModel):
     title: str = Field(description="Document title")
     excerpt: str = Field(description="Relevant excerpt")
     source: str = Field(description="Source reference")
+    url: Optional[str] = Field(None, description="Source URL if available")
     relevance: float = Field(ge=0.0, le=1.0, description="Relevance score")
+
+
+class EvidenceItem(BaseModel):
+    """Normalized evidence item for UI and references."""
+
+    id: str = Field(description="Evidence identifier")
+    source: str = Field(description="Source system or type")
+    title: str = Field(description="Evidence title")
+    excerpt: Optional[str] = Field(None, description="Short excerpt")
+    url: Optional[str] = Field(None, description="Source URL if available")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score")
+    doc_id: Optional[str] = Field(None, description="Document identifier if known")
+    chunk_id: Optional[str] = Field(None, description="Chunk identifier if known")
+    section: Optional[str] = Field(None, description="Story section supported by this evidence")
+
+
+class ContextGraphNode(BaseModel):
+    """Node in the lightweight context graph."""
+
+    id: str = Field(description="Unique node identifier")
+    type: Literal[
+        "source",
+        "document",
+        "chunk",
+        "entity",
+        "story",
+        "story_section",
+        "decision",
+    ] = Field(description="Node type")
+    label: str = Field(description="Human-readable label")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ContextGraphEdge(BaseModel):
+    """Edge in the lightweight context graph."""
+
+    source: str = Field(description="Source node id")
+    target: str = Field(description="Target node id")
+    type: Literal[
+        "SOURCE_OF",
+        "PART_OF",
+        "MENTIONS",
+        "DERIVED_FROM",
+        "SUPPORTS",
+        "CONFLICTS_WITH",
+    ] = Field(description="Edge type")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ContextGraphSnapshot(BaseModel):
+    """Context graph snapshot for a workflow run."""
+
+    run_id: Optional[str] = Field(None, description="Workflow run identifier")
+    story_id: Optional[str] = Field(None, description="Story identifier if available")
+    nodes: List[ContextGraphNode] = Field(default_factory=list)
+    edges: List[ContextGraphEdge] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class CodeContextSnippet(BaseModel):
@@ -570,6 +659,7 @@ class OrchestratorDecision(BaseModel):
         "story_writer",
         "validation",
         "critique_loop",
+        "split_proposal",
         "end",
     ]
     reasoning: str = Field(description="Explanation for routing decision")
@@ -580,6 +670,15 @@ class IntegrationDetail(BaseModel):
 
     label: str = Field(description="Detail label")
     value: str = Field(description="Detail value")
+
+
+class IntegrationAction(BaseModel):
+    """Action metadata for integration controls."""
+
+    label: str = Field(description="Action label")
+    action_type: Literal["connect", "scopes", "workspace", "repos", "test", "sync"] = Field(
+        description="Action type"
+    )
 
 
 class IntegrationInfo(BaseModel):
@@ -593,6 +692,9 @@ class IntegrationInfo(BaseModel):
     )
     details: List[IntegrationDetail] = Field(default_factory=list)
     footer_action: Optional[str] = Field(None, description="Optional footer action label")
+    footer_actions: List[IntegrationAction] = Field(
+        default_factory=list, description="Footer action list"
+    )
 
 
 class IntegrationConnectRequest(BaseModel):
@@ -612,3 +714,257 @@ class IntegrationTestResult(BaseModel):
 
     success: bool = Field(description="Test result")
     message: str = Field(description="Result message")
+
+
+# =============================================================================
+# Prompt Library & Management Models
+# =============================================================================
+
+
+class PromptCategory(str, Enum):
+    """Categories for prompt templates."""
+
+    AGENT_SYSTEM = "agent_system"  # System prompts for agents
+    AGENT_TASK = "agent_task"  # Task-specific prompts
+    CRITIQUE = "critique"  # Critique and validation prompts
+    EXTRACTION = "extraction"  # Entity/intent extraction prompts
+    GENERATION = "generation"  # Content generation prompts
+    SYNTHESIS = "synthesis"  # Synthesis and summarization prompts
+    ROUTING = "routing"  # Orchestrator routing prompts
+
+
+class PromptModelVariant(BaseModel):
+    """Model-specific variant of a prompt template.
+    
+    Different LLM providers may require different prompt formats or
+    optimizations for best performance.
+    """
+
+    model_pattern: str = Field(
+        description="Model name pattern (e.g., 'ollama/*', 'gpt-4*', 'claude-3*')"
+    )
+    template: str = Field(description="Model-specific prompt template")
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Recommended temperature")
+    max_tokens: Optional[int] = Field(None, description="Recommended max tokens")
+    notes: Optional[str] = Field(None, description="Notes about this variant")
+
+
+class PromptVariable(BaseModel):
+    """Variable definition for prompt templates."""
+
+    name: str = Field(description="Variable name (used in template as {name})")
+    description: str = Field(description="What this variable represents")
+    required: bool = Field(default=True, description="Whether variable is required")
+    default: Optional[str] = Field(None, description="Default value if not provided")
+    example: Optional[str] = Field(None, description="Example value for documentation")
+
+
+class PromptPerformanceMetrics(BaseModel):
+    """Performance metrics for a prompt template version."""
+
+    total_uses: int = Field(default=0, description="Total number of times used")
+    success_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Success rate (0-1)")
+    avg_latency_ms: float = Field(default=0.0, ge=0.0, description="Average latency in ms")
+    avg_input_tokens: float = Field(default=0.0, ge=0.0, description="Average input tokens")
+    avg_output_tokens: float = Field(default=0.0, ge=0.0, description="Average output tokens")
+    quality_score: Optional[float] = Field(None, ge=0.0, le=1.0, description="Quality score if evaluated")
+    last_used: Optional[datetime] = Field(None, description="Last usage timestamp")
+    error_rate: float = Field(default=0.0, ge=0.0, le=1.0, description="Error rate")
+
+
+class PromptVersion(BaseModel):
+    """A specific version of a prompt template."""
+
+    version: str = Field(description="Version string (semver format, e.g., '1.0.0')")
+    template: str = Field(description="The prompt template text with {variables}")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = Field(None, description="Author identifier")
+    changelog: Optional[str] = Field(None, description="Description of changes in this version")
+    is_active: bool = Field(default=True, description="Whether this version is active")
+    metrics: PromptPerformanceMetrics = Field(
+        default_factory=PromptPerformanceMetrics,
+        description="Performance metrics for this version"
+    )
+    model_variants: List[PromptModelVariant] = Field(
+        default_factory=list,
+        description="Model-specific variants of this prompt"
+    )
+
+
+class PromptTemplate(BaseModel):
+    """A prompt template with versioning, metadata, and performance tracking.
+    
+    This is the core entity for the Prompt Library, supporting:
+    - Version control for prompt iterations
+    - Model-specific variants
+    - Performance metrics tracking
+    - Variable substitution
+    - Agent/category tagging
+    """
+
+    id: str = Field(description="Unique identifier for this prompt template")
+    name: str = Field(description="Human-readable name")
+    description: str = Field(description="Description of what this prompt does")
+    category: PromptCategory = Field(description="Prompt category")
+    agent_type: Optional[str] = Field(
+        None, 
+        description="Agent type this prompt is for (e.g., 'po_agent', 'qa_agent')"
+    )
+    tags: List[str] = Field(default_factory=list, description="Tags for filtering and search")
+    
+    # Variables
+    variables: List[PromptVariable] = Field(
+        default_factory=list,
+        description="Variable definitions for this template"
+    )
+    
+    # Versioning
+    current_version: str = Field(description="Current active version")
+    versions: List[PromptVersion] = Field(
+        default_factory=list,
+        description="All versions of this prompt"
+    )
+    
+    # Metadata
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = Field(None, description="Author identifier")
+    
+    # Feature flags
+    enable_ab_testing: bool = Field(default=False, description="Enable A/B testing")
+    ab_test_config: Optional["ABTestConfig"] = Field(None, description="A/B test configuration")
+
+    def get_current_template(self) -> str:
+        """Get the template text for the current version."""
+        for v in self.versions:
+            if v.version == self.current_version:
+                return v.template
+        return ""
+
+    def get_template_for_model(self, model_name: str) -> str:
+        """Get the best template for a specific model.
+        
+        First checks for model-specific variants, falls back to default template.
+        """
+        for v in self.versions:
+            if v.version == self.current_version:
+                # Check for model-specific variant
+                for variant in v.model_variants:
+                    import fnmatch
+                    if fnmatch.fnmatch(model_name, variant.model_pattern):
+                        return variant.template
+                # Fall back to default template
+                return v.template
+        return ""
+
+    def render(self, model_name: str, **kwargs: Any) -> str:
+        """Render the template with variable substitution.
+        
+        Args:
+            model_name: Model name for selecting variant
+            **kwargs: Variable values to substitute
+            
+        Returns:
+            Rendered prompt string
+        """
+        template = self.get_template_for_model(model_name)
+        
+        # Apply defaults for missing variables
+        for var in self.variables:
+            if var.name not in kwargs and var.default is not None:
+                kwargs[var.name] = var.default
+        
+        # Substitute variables
+        try:
+            return template.format(**kwargs)
+        except KeyError as e:
+            raise ValueError(f"Missing required variable: {e}")
+
+
+class ABTestConfig(BaseModel):
+    """Configuration for A/B testing between prompt versions."""
+
+    test_id: str = Field(description="Unique identifier for this A/B test")
+    name: str = Field(description="Test name")
+    description: Optional[str] = Field(None, description="Test description")
+    
+    # Variants
+    control_version: str = Field(description="Control version (baseline)")
+    treatment_versions: List[str] = Field(description="Treatment versions to test")
+    traffic_split: Dict[str, float] = Field(
+        description="Traffic split by version (must sum to 1.0)"
+    )
+    
+    # Configuration
+    start_time: Optional[datetime] = Field(None, description="Test start time")
+    end_time: Optional[datetime] = Field(None, description="Test end time")
+    min_sample_size: int = Field(default=100, description="Minimum samples per variant")
+    
+    # Metrics to track
+    primary_metric: str = Field(
+        default="success_rate",
+        description="Primary metric for evaluation"
+    )
+    secondary_metrics: List[str] = Field(
+        default_factory=lambda: ["latency", "quality_score"],
+        description="Secondary metrics to track"
+    )
+    
+    # State
+    is_active: bool = Field(default=False, description="Whether test is currently active")
+    results: Dict[str, PromptPerformanceMetrics] = Field(
+        default_factory=dict,
+        description="Results by version"
+    )
+
+
+class PromptExecutionRecord(BaseModel):
+    """Record of a single prompt execution for monitoring."""
+
+    id: str = Field(description="Unique execution identifier")
+    prompt_id: str = Field(description="Prompt template identifier")
+    version: str = Field(description="Version used")
+    model: str = Field(description="Model used")
+    
+    # Timing
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    latency_ms: float = Field(description="Execution latency in ms")
+    
+    # Tokens
+    input_tokens: int = Field(default=0)
+    output_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    
+    # Result
+    success: bool = Field(description="Whether execution succeeded")
+    error: Optional[str] = Field(None, description="Error message if failed")
+    
+    # Quality (optional, may be filled later by evaluation)
+    quality_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    quality_feedback: Optional[str] = Field(None, description="Quality evaluation feedback")
+    
+    # Context
+    agent_type: Optional[str] = Field(None, description="Agent that used this prompt")
+    workflow_id: Optional[str] = Field(None, description="Workflow run identifier")
+    trace_id: Optional[str] = Field(None, description="Trace identifier for observability")
+    
+    # A/B Testing
+    ab_test_id: Optional[str] = Field(None, description="A/B test identifier if in test")
+    is_control: Optional[bool] = Field(None, description="Whether this is control variant")
+    
+    # Metadata
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PromptLibrarySummary(BaseModel):
+    """Summary statistics for the prompt library."""
+
+    total_prompts: int = Field(default=0)
+    prompts_by_category: Dict[str, int] = Field(default_factory=dict)
+    prompts_by_agent: Dict[str, int] = Field(default_factory=dict)
+    total_executions: int = Field(default=0)
+    avg_success_rate: float = Field(default=1.0)
+    avg_latency_ms: float = Field(default=0.0)
+    active_ab_tests: int = Field(default=0)
+    top_performing_prompts: List[str] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)

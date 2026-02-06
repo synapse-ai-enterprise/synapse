@@ -33,16 +33,17 @@ if [ ! -f .env ]; then
     else
         echo "⚠️  .env.example not found. Creating minimal .env..."
         cat > .env << EOF
-# Minimal configuration for demo
-LITELLM_MODEL=gpt-4-turbo-preview
-OPENAI_API_KEY=
+# Minimal configuration for demo (Ollama local)
+LITELLM_MODEL=ollama/llama3
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 LINEAR_API_KEY=
 DRY_RUN=true
 MODE=comment_only
 VECTOR_STORE_PATH=./data/lancedb
+EMBEDDING_MODEL=local/all-MiniLM-L6-v2
 EOF
         echo "✅ Created minimal .env file"
-        echo "   Please add your OPENAI_API_KEY to run the demo"
+        echo "   Ensure Ollama is running to run the demo"
     fi
 else
     echo "✅ .env file exists"
@@ -71,7 +72,7 @@ echo "Setup complete!"
 echo "=========================================="
 echo ""
 echo "Next steps:"
-echo "1. Edit .env and add your OPENAI_API_KEY"
+echo "1. Ensure Ollama is running and .env is configured"
 echo "2. (Optional) Add LINEAR_API_KEY for Linear integration"
 echo "3. (Optional) Run ingestion: poetry run python scripts/ingest_knowledge.py"
 echo "4. Run demo: poetry run python scripts/demo.py"

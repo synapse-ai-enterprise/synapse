@@ -518,12 +518,19 @@ async def run_demo():
     log_writer.writeln("🔧 Initializing dependencies...")
     container = get_container()
     
+    def model_requires_api_key(model_name: str) -> bool:
+        """Return True when the selected model needs a remote API key."""
+        return not model_name.startswith("ollama/")
+
+    selected_model = settings.litellm_model
+    requires_api_key = model_requires_api_key(selected_model)
+
     try:
         llm_provider = container.get_llm_provider()
         print("   ✓ LLM provider initialized")
     except Exception as e:
         print(f"   ⚠️  LLM provider initialization failed: {e}")
-        print("   Note: This is expected if OPENAI_API_KEY is not set")
+        print("   Note: This is expected if the selected model requires an API key")
         print("   The demo will show the workflow structure but cannot execute LLM calls")
         return
 
@@ -583,11 +590,12 @@ async def run_demo():
     log_writer.writeln()
 
     # Check if we can actually run the workflow
-    if not settings.openai_api_key:
-        log_writer.writeln("⚠️  OPENAI_API_KEY not set. Cannot execute full workflow.")
+    if requires_api_key and not settings.openai_api_key:
+        log_writer.writeln("⚠️  API key not set for the selected model.")
         log_writer.writeln()
         log_writer.writeln("To run the full demo:")
-        log_writer.writeln("1. Set OPENAI_API_KEY in your .env file")
+        log_writer.writeln("1. Set the appropriate API key in your .env file")
+        log_writer.writeln("   (or switch to an Ollama model like ollama/llama3)")
         log_writer.writeln("2. Optionally set LINEAR_API_KEY for real Linear integration")
         log_writer.writeln("3. Run: python scripts/demo.py")
         log_writer.writeln()

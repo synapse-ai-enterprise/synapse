@@ -80,10 +80,7 @@ def check_env_file() -> Tuple[bool, str, Dict[str, bool]]:
 
     # Read .env file
     env_vars = {}
-    required_vars = {
-        "OPENAI_API_KEY": False,  # Required for LLM
-        "LITELLM_MODEL": False,  # Optional, has default
-    }
+    required_vars: Dict[str, bool] = {}
     optional_vars = {
         "LINEAR_API_KEY": False,
         "LINEAR_TEAM_ID": False,
@@ -106,6 +103,12 @@ def check_env_file() -> Tuple[bool, str, Dict[str, bool]]:
                     env_vars[key] = value
     except Exception as e:
         return False, f"Error reading .env: {e}", {}
+
+    model_name = env_vars.get("LITELLM_MODEL", "ollama/llama3")
+    if model_name.startswith("ollama/"):
+        required_vars["OLLAMA_BASE_URL"] = bool(env_vars.get("OLLAMA_BASE_URL"))
+    else:
+        required_vars["OPENAI_API_KEY"] = bool(env_vars.get("OPENAI_API_KEY"))
 
     # Check required vars
     missing_required = [k for k, v in required_vars.items() if not v]
@@ -249,7 +252,11 @@ def main():
         if not lock_ok:
             print("  - Update lock file: poetry lock")
         if not env_ok:
-            print("  - Create .env file with OPENAI_API_KEY (see README.md)")
+            model_name = env_vars.get("LITELLM_MODEL", "ollama/llama3")
+            if model_name.startswith("ollama/"):
+                print("  - Create .env file with OLLAMA_BASE_URL (see README.md)")
+            else:
+                print("  - Create .env file with OPENAI_API_KEY (see README.md)")
         if not redis_ok:
             print("  - Install/start Redis: brew install redis && brew services start redis")
         return 1

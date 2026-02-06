@@ -3,7 +3,14 @@
 from typing import Dict
 
 from src.application.workflows.registry import WorkflowRegistry
-from src.domain.interfaces import IEventBus, IKnowledgeBase, ILLMProvider, IMemoryStore, IProgressCallback
+from src.domain.interfaces import (
+    IContextGraphStore,
+    IEventBus,
+    IKnowledgeBase,
+    ILLMProvider,
+    IMemoryStore,
+    IProgressCallback,
+)
 from src.domain.schema import DomainEvent, MemoryItem, MemoryScope, MemoryTier, StoryWritingRequest
 from src.domain.use_cases import StoryWritingUseCase
 from src.utils.tracing import get_trace_id
@@ -18,12 +25,14 @@ class StoryWritingHandler:
         llm_provider: ILLMProvider,
         event_bus: IEventBus,
         memory_store: IMemoryStore,
+        context_graph_store: IContextGraphStore,
         workflow_registry: WorkflowRegistry,
         progress_callback: IProgressCallback | None = None,
     ) -> None:
         self._use_case = StoryWritingUseCase(
             knowledge_base=knowledge_base,
             llm_provider=llm_provider,
+            context_graph_store=context_graph_store,
             progress_callback=progress_callback,
         )
         self._event_bus = event_bus

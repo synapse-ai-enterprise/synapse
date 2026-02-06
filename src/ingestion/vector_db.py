@@ -112,7 +112,7 @@ class LanceDBAdapter(IKnowledgeBase):
     async def search(
         self,
         query: str,
-        source: Optional[Literal["github", "notion"]] = None,
+        source: Optional[str] = None,
         limit: int = 10,
     ) -> List[UASKnowledgeUnit]:
         """Search the knowledge base with optional source filter.
@@ -156,9 +156,15 @@ class LanceDBAdapter(IKnowledgeBase):
                 row_dict[col_name] = arrow_table[col_name][i].as_py()
             results.append(row_dict)
 
-        # Convert to UASKnowledgeUnit
+        # Convert to UASKnowledgeUnit with similarity scores
         knowledge_units = []
         for row in results:
+            # LanceDB returns _distance (L2 distance); convert to similarity score
+            # For cosine distance: similarity = 1 - distance
+            # For L2 distance: similarity = 1 / (1 + distance)
+            distance = row.get("_distance", 0.5)
+            similarity_score = 1.0 / (1.0 + distance) if distance >= 0 else 0.5
+
             unit = UASKnowledgeUnit(
                 id=row["id"],
                 content=row["text"],
@@ -167,6 +173,7 @@ class LanceDBAdapter(IKnowledgeBase):
                 last_updated=row.get("last_updated", ""),
                 topics=row.get("topics", []),
                 location=row["location"],
+                score=round(similarity_score, 4),
             )
             knowledge_units.append(unit)
 
@@ -227,7 +234,7 @@ class InMemoryKnowledgeBase(IKnowledgeBase):
     async def search(
         self,
         query: str,
-        source: Optional[Literal["github", "notion"]] = None,
+        source: Optional[Literal["github", "notion", "jira", "confluence", "direct", "codebase"]] = None,
         limit: int = 10,
     ) -> List[UASKnowledgeUnit]:
         """Search knowledge base using cosine similarity."""
@@ -255,7 +262,7 @@ class InMemoryKnowledgeBase(IKnowledgeBase):
         candidates.sort(key=lambda item: item[0], reverse=True)
 
         results = []
-        for _, row in candidates[:limit]:
+        for score, row in candidates[:limit]:
             results.append(
                 UASKnowledgeUnit(
                     id=row["id"],
@@ -265,6 +272,7 @@ class InMemoryKnowledgeBase(IKnowledgeBase):
                     last_updated=row.get("last_updated", ""),
                     topics=row.get("topics", []),
                     location=row["location"],
+                    score=round(score, 4),
                 )
             )
         return results

@@ -6,7 +6,13 @@ from src.cognitive_engine.graph import create_cognitive_graph
 from src.cognitive_engine.state import CognitiveState
 from src.cognitive_engine.story_graph import create_story_writing_graph
 from src.cognitive_engine.story_state import StoryWritingState
-from src.domain.interfaces import IKnowledgeBase, IIssueTracker, ILLMProvider, IProgressCallback
+from src.domain.interfaces import (
+    IContextGraphStore,
+    IKnowledgeBase,
+    IIssueTracker,
+    ILLMProvider,
+    IProgressCallback,
+)
 from src.domain.schema import OptimizationRequest, StoryWritingRequest
 
 
@@ -108,10 +114,12 @@ class StoryWritingUseCase:
         self,
         knowledge_base: IKnowledgeBase,
         llm_provider: ILLMProvider,
+        context_graph_store: IContextGraphStore | None = None,
         progress_callback: Optional[IProgressCallback] = None,
     ):
         self.knowledge_base = knowledge_base
         self.llm_provider = llm_provider
+        self.context_graph_store = context_graph_store
         self.progress_callback = progress_callback
 
     async def execute(self, request: StoryWritingRequest) -> Dict[str, Any]:
@@ -120,6 +128,7 @@ class StoryWritingUseCase:
             graph = create_story_writing_graph(
                 knowledge_base=self.knowledge_base,
                 llm_provider=self.llm_provider,
+                context_graph_store=self.context_graph_store,
             )
 
             initial_state = StoryWritingState(request=request)

@@ -1,22 +1,67 @@
-"""Template Parser Agent."""
+"""Template Parser Agent.
+
+Prompt Library Integration: Now fetches prompts dynamically from the Prompt Library
+"""
 
 from src.domain.interfaces import ILLMProvider
 from src.domain.schema import TemplateSchema
+from src.infrastructure.prompt_library import get_prompt_library
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TemplateParserAgent:
     """Agent for parsing and validating story templates."""
 
-    SYSTEM_PROMPT = """You are a Template Parser Agent. Your role is to:
-1. Parse an uploaded story template.
-2. Extract required vs optional fields.
-3. Detect formatting expectations (gherkin vs free-form).
-4. Create a schema for filling.
+    # Prompt ID for fetching from the library
+    PROMPT_ID = "template_parser_agent_system"
 
-Return a JSON object matching the requested schema exactly."""
+    # Default fallback prompt (used if prompt library fetch fails)
+    DEFAULT_SYSTEM_PROMPT = """You are a Template Parser Agent that parses story templates.
+
+IMPORTANT: Return a JSON object (NOT a list) with this EXACT structure:
+{
+  "required_fields": ["title", "description", "acceptance_criteria"],
+  "optional_fields": ["dependencies", "nfrs", "out_of_scope"],
+  "format_style": "gherkin",
+  "sections": [{"name": "acceptance_criteria", "format": "gherkin", "min_items": 3}]
+}
+
+Start your response with { and end with }. Return ALL fields."""
 
     def __init__(self, llm_provider: ILLMProvider):
         self.llm_provider = llm_provider
+        self._prompt_library = get_prompt_library()
+
+    async def _get_system_prompt(self) -> str:
+        """Fetch system prompt from the Prompt Library with fallback.
+        
+        Returns:
+            The system prompt template string.
+        """
+        try:
+            template = await self._prompt_library.get_prompt_template(self.PROMPT_ID)
+            if template:
+                logger.debug(
+                    "template_parser_agent.prompt_loaded",
+                    prompt_id=self.PROMPT_ID,
+                    source="prompt_library",
+                )
+                return template
+        except Exception as e:
+            logger.warning(
+                "template_parser_agent.prompt_load_failed",
+                prompt_id=self.PROMPT_ID,
+                error=str(e),
+            )
+        
+        logger.debug(
+            "template_parser_agent.prompt_loaded",
+            prompt_id=self.PROMPT_ID,
+            source="fallback",
+        )
+        return self.DEFAULT_SYSTEM_PROMPT
 
     async def parse(self, template_text: str) -> TemplateSchema:
         """Parse template text into a structured schema."""
@@ -24,14 +69,17 @@ Return a JSON object matching the requested schema exactly."""
             return TemplateSchema(
                 required_fields=["title", "description", "acceptance_criteria"],
                 optional_fields=["dependencies", "nfrs", "out_of_scope", "assumptions", "open_questions"],
-                format_style="free_form",
+                format_style="gherkin",
                 sections=[
-                    {"name": "acceptance_criteria", "format": "free_form", "min_items": 3},
+                    {"name": "acceptance_criteria", "format": "gherkin", "min_items": 3},
                 ],
             )
 
+        # Fetch prompt from library with fallback
+        system_prompt = await self._get_system_prompt()
+
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""Parse this template:

@@ -1,4 +1,7 @@
-"""Validation & Gap Detection Agent."""
+"""Validation & Gap Detection Agent.
+
+Prompt Library Integration: Now fetches prompts dynamically from the Prompt Library
+"""
 
 from typing import Any, List
 
@@ -13,30 +16,83 @@ from src.domain.schema import (
     ValidationResults,
     ValidationResultsDraft,
 )
+from src.infrastructure.prompt_library import get_prompt_library
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ValidationGapDetectionAgent:
     """Agent that validates story quality and detects gaps."""
 
-    SYSTEM_PROMPT = """You are a Validation & Gap Detection Agent. Your role is to:
-1. Validate the story against INVEST criteria.
-2. Identify missing information and gaps.
-3. Flag ungrounded assumptions or claims.
-4. Identify technical risks or conflicts.
-5. Ensure acceptance criteria are testable.
+    # Prompt ID for fetching from the library
+    PROMPT_ID = "validation_gap_agent_system"
 
-Return a JSON object matching the requested schema exactly."""
+    # Default fallback prompt (used if prompt library fetch fails)
+    DEFAULT_SYSTEM_PROMPT = """You are a Validation & Gap Detection Agent.
+
+IMPORTANT: Return a JSON object (NOT a list) with this EXACT structure:
+{
+  "invest_score": {
+    "independent": true,
+    "negotiable": true,
+    "valuable": true,
+    "estimable": true,
+    "small": true,
+    "testable": true,
+    "overall": "pass"
+  },
+  "issues": [{"severity": "warning", "type": "general", "message": "issue description"}],
+  "gaps": [{"field": "field_name", "gap": "gap description"}],
+  "ungrounded_claims": ["claim without evidence"],
+  "technical_risks": [{"risk": "risk description", "mitigation": "how to address"}]
+}
+
+Use empty arrays [] if no items exist. Start with { and end with }."""
 
     def __init__(self, llm_provider: ILLMProvider):
         self.llm_provider = llm_provider
+        self._prompt_library = get_prompt_library()
+
+    async def _get_system_prompt(self) -> str:
+        """Fetch system prompt from the Prompt Library with fallback.
+        
+        Returns:
+            The system prompt template string.
+        """
+        try:
+            template = await self._prompt_library.get_prompt_template(self.PROMPT_ID)
+            if template:
+                logger.debug(
+                    "validation_gap_agent.prompt_loaded",
+                    prompt_id=self.PROMPT_ID,
+                    source="prompt_library",
+                )
+                return template
+        except Exception as e:
+            logger.warning(
+                "validation_gap_agent.prompt_load_failed",
+                prompt_id=self.PROMPT_ID,
+                error=str(e),
+            )
+        
+        logger.debug(
+            "validation_gap_agent.prompt_loaded",
+            prompt_id=self.PROMPT_ID,
+            source="fallback",
+        )
+        return self.DEFAULT_SYSTEM_PROMPT
 
     async def validate(
         self,
         story: PopulatedStory,
         context: RetrievedContext,
     ) -> ValidationResults:
+        # Fetch prompt from library with fallback
+        system_prompt = await self._get_system_prompt()
+        
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""Validate this story and identify gaps.

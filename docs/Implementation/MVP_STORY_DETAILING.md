@@ -14,7 +14,7 @@ Template Parser → Knowledge Retrieval → Story Writer → Validation → Crit
 
 ### Admin MVP Scope
 - Templates: User Story only
-- Integrations: Jira + Confluence only
+- Integrations: Jira + Confluence only (ingestion loaders implemented)
 - Models & Agents: enabled
 - Audit & Governance: future release
 
@@ -50,3 +50,30 @@ Include a **lightweight role selector** (client-side only) to gate features:
 
 Out of MVP:
 - Real authentication (SSO/OAuth), server-side RBAC, audit-grade access control
+
+### Hybrid RAG + Context Graph (MVP)
+Goal: increase context quality and traceability using a lightweight Context Graph
+that complements existing vector retrieval (GraphRAG-lite).
+
+#### MVP Knowledge/Context Graph
+- **Node types:** Source, Document, Chunk, Entity, Story, StorySection, Decision.
+- **Edge types:** SOURCE_OF, PART_OF, MENTIONS, DERIVED_FROM, SUPPORTS, CONFLICTS_WITH.
+- **Storage:** lightweight graph stored in memory store for MVP (persist later).
+- **Linking:** every retrieved chunk is linked to a Story and StorySection (AC, NFR, dependency, etc.).
+- **Citations:** story fields store reference IDs so evidence can be surfaced inline or in the evidence panel.
+
+#### MVP Retrieval + Graph Build Flow
+1) Ingest documents into LanceDB with metadata (source, author, timestamp, sensitivity).
+   - Jira issues and Confluence pages are now supported by ingestion loaders.
+2) On retrieval, capture top-N chunks and create graph nodes/edges for the workflow run.
+3) Deduplicate by URL/hash and keep best-ranked chunk per source.
+4) Emit `ContextGraphSnapshot` in workflow output and attach to story artifact metadata.
+
+#### MVP Governance (Lightweight)
+- Respect existing metadata fields (source, timestamp) and basic sensitivity tags.
+- No mutation to external systems; graph is internal only.
+- Provide an evidence panel and optional inline citations for transparency.
+
+#### Out of MVP
+- Persistent graph store, ACL enforcement, and policy checks.
+- Cross-run graph analytics (change impact, ownership, and dependency reasoning).

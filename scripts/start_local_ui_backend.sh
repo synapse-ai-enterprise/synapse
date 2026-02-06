@@ -56,7 +56,7 @@ if [[ -z "$PYTHON_311" ]]; then
 fi
 
 poetry env use "$PYTHON_311"
-poetry install --extras local-embeddings
+poetry install --extras "local-embeddings vector-store"
 poetry run python -m src.main >"$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" >"$BACKEND_PID_FILE"

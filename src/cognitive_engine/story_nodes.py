@@ -14,10 +14,14 @@ from src.cognitive_engine.agents.story_writer_agent import StoryWriterAgent
 from src.cognitive_engine.agents.template_parser_agent import TemplateParserAgent
 from src.cognitive_engine.agents.validation_gap_agent import ValidationGapDetectionAgent
 from src.cognitive_engine.story_state import StoryWritingState
-from src.domain.interfaces import IKnowledgeBase, ILLMProvider
+from src.domain.interfaces import IContextGraphStore, IKnowledgeBase, ILLMProvider
 from src.domain.schema import (
     AcceptanceCriteriaItem,
+    ContextGraphEdge,
+    ContextGraphNode,
+    ContextGraphSnapshot,
     CoreArtifact,
+    EvidenceItem,
     NormalizedPriority,
     PopulatedStory,
     RetrievedContext,
@@ -79,6 +83,9 @@ async def story_generation_node(
     if not techniques and state.splitting_recommendations:
         techniques = [rec.technique for rec in state.splitting_recommendations[:3]]
         state.warnings.append("No techniques selected; defaulted to top recommendations.")
+    if not techniques:
+        techniques = ["Workflow Steps"]
+        state.warnings.append("No techniques available; defaulted to Workflow Steps.")
 
     result = await agent.generate_stories(
         epic_text=state.request.epic_text,
@@ -86,6 +93,9 @@ async def story_generation_node(
         parent_epic=state.request.epic_id,
     )
     state.generated_stories = result.stories
+    if not result.stories:
+        state.warnings.append("No stories generated; check epic text and techniques.")
+        state.metadata.setdefault("story_generation_complete", True)
     return _state_to_dict(state)
 
 
@@ -102,14 +112,31 @@ async def template_parser_node(
 async def knowledge_retrieval_node(
     state_dict: Dict[str, Any],
     agent: KnowledgeRetrievalAgent,
+    context_graph_store: IContextGraphStore | None = None,
 ) -> Dict[str, Any]:
     state = _state_from_dict(state_dict)
     if not state.request.story_text:
         state.warnings.append("Story text missing; cannot retrieve context.")
+        state.metadata.setdefault("knowledge_retrieval_skipped", True)
         return _state_to_dict(state)
 
-    context = await agent.retrieve(state.request.story_text)
+    context = await agent.retrieve(
+        state.request.story_text,
+        sources=state.request.retrieval_sources or None,
+        direct_sources=state.request.direct_sources or None,
+    )
     state.retrieved_context = context
+    evidence_items = _build_evidence_items(context)
+    field_references = _build_field_references(evidence_items)
+    state.evidence_items = evidence_items
+    state.field_references = field_references
+    state.context_graph = _build_context_graph(
+        evidence_items=evidence_items,
+        field_references=field_references,
+        story_id=state.request.epic_id or "story_detail",
+    )
+    if context_graph_store:
+        await context_graph_store.write(state.context_graph)
     return _state_to_dict(state)
 
 
@@ -179,6 +206,7 @@ async def critique_loop_node(
     state.qa_confidence = qa_result.get("confidence")
     state.qa_overall_assessment = qa_result.get("overall_assessment")
     state.structured_qa_violations = qa_result.get("structured_violations", [])
+    state.invest_violations = qa_result.get("violations", [])
     state.developer_critique = dev_result.get("critique")
     state.developer_confidence = dev_result.get("confidence")
     state.developer_feasibility = dev_result.get("feasibility")
@@ -209,6 +237,123 @@ async def critique_loop_node(
     return _state_to_dict(state)
 
 
+async def split_proposal_node(
+    state_dict: Dict[str, Any],
+    po_agent: ProductOwnerAgent,
+) -> Dict[str, Any]:
+    """Propose splitting the current artifact into multiple smaller artifacts.
+
+    Used when the critique loop concludes the story is too large (INVEST S) or covers
+    multiple distinct features; the result is a proposal for N artifacts that
+    together preserve original scope.
+
+    Uses context from:
+    - Original story text (to preserve full scope)
+    - Generated/refined story (for improved clarity)
+    - Evidence from knowledge retrieval
+    - QA and Developer critiques
+    """
+    state = _state_from_dict(state_dict)
+
+    # Build artifact from ORIGINAL request to preserve full scope
+    # The original story_text contains all models/entities (e.g., Order, Frame, Glasses)
+    original_story_text = state.request.story_text or ""
+    
+    # Extract acceptance criteria from original story text if available
+    original_ac = []
+    if "acceptance criteria" in original_story_text.lower():
+        lines = original_story_text.split("\n")
+        in_ac_section = False
+        for line in lines:
+            line_lower = line.lower().strip()
+            if "acceptance criteria" in line_lower:
+                in_ac_section = True
+                continue
+            if in_ac_section and line.strip():
+                cleaned = line.strip().lstrip("-*•").strip()
+                if cleaned and not cleaned.lower().startswith(("description", "summary", "title", "priority")):
+                    original_ac.append(cleaned)
+                if ":" in line and not line.strip().startswith(("-", "*", "•")):
+                    in_ac_section = False
+
+    # Build artifact using original story text for full scope
+    source_id = state.request.epic_id or state.request.project_id or "story_detail"
+    human_ref = state.request.epic_id or "STORY-DETAIL"
+    
+    # Use populated_story's AC if original extraction failed
+    story = state.populated_story
+    if not original_ac and story and story.acceptance_criteria:
+        original_ac = _acceptance_criteria_to_strings(story.acceptance_criteria)
+    
+    # Build the artifact with ORIGINAL scope
+    artifact = CoreArtifact(
+        source_system="story_detailing",
+        source_id=source_id,
+        human_ref=human_ref,
+        url="",
+        title=story.title if story else "Story to Split",
+        description=original_story_text,
+        acceptance_criteria=original_ac,
+        type="story",
+        status=WorkItemStatus.TODO,
+        priority=NormalizedPriority.MEDIUM,
+        related_files=[],
+        parent_ref=state.request.epic_id,
+    )
+
+    # Gather violations summary from both structured and string violations
+    violations_summary: List[str] = []
+    for v in state.structured_qa_violations:
+        if hasattr(v, "criterion") and hasattr(v, "description"):
+            violations_summary.append(f"{v.criterion}: {v.description}")
+        elif isinstance(v, dict):
+            violations_summary.append(
+                f"{v.get('criterion', '?')}: {v.get('description', '')}"
+            )
+    
+    if hasattr(state, "invest_violations") and state.invest_violations:
+        for v in state.invest_violations:
+            if isinstance(v, str) and v not in violations_summary:
+                violations_summary.append(v)
+
+    # Build evidence summary from retrieved context
+    evidence_summary = None
+    if state.retrieved_context and state.retrieved_context.relevant_docs:
+        evidence_parts = []
+        for doc in state.retrieved_context.relevant_docs[:5]:  # Top 5 docs
+            evidence_parts.append(f"- [{doc.source}] {doc.title}: {doc.excerpt[:150]}...")
+        if evidence_parts:
+            evidence_summary = "\n".join(evidence_parts)
+    
+    # Build refined story context from populated/refined story
+    refined_story_context = None
+    if story:
+        refined_parts = []
+        if story.title:
+            refined_parts.append(f"Title: {story.title}")
+        if story.description:
+            refined_parts.append(f"Description: {story.description[:300]}...")
+        if story.acceptance_criteria:
+            ac_strings = _acceptance_criteria_to_strings(story.acceptance_criteria)
+            refined_parts.append(f"Refined ACs: {'; '.join(ac_strings[:5])}")
+        if story.dependencies:
+            refined_parts.append(f"Dependencies: {', '.join(story.dependencies[:3])}")
+        if refined_parts:
+            refined_story_context = "\n".join(refined_parts)
+
+    proposed = await po_agent.propose_artifact_split(
+        artifact,
+        qa_critique=state.qa_critique,
+        violations_summary=violations_summary or None,
+        developer_critique=state.developer_critique,
+        evidence_summary=evidence_summary,
+        refined_story_context=refined_story_context,
+    )
+    state.proposed_artifacts = proposed
+    state.metadata["split_completed"] = True
+    return _state_to_dict(state)
+
+
 def orchestrator_node(
     state_dict: Dict[str, Any],
     agent: OrchestratorAgent,
@@ -223,6 +368,145 @@ def _empty_context() -> Any:
     from src.domain.schema import RetrievedContext
 
     return RetrievedContext()
+
+
+def _build_evidence_items(context: RetrievedContext) -> List[EvidenceItem]:
+    items: List[EvidenceItem] = []
+    for index, doc in enumerate(context.relevant_docs or []):
+        items.append(
+            EvidenceItem(
+                id=f"doc-{index}",
+                source=doc.source,
+                title=doc.title,
+                excerpt=doc.excerpt,
+                url=doc.url,
+                confidence=doc.relevance,
+                section="description",
+            )
+        )
+    for index, decision in enumerate(context.decisions or []):
+        items.append(
+            EvidenceItem(
+                id=f"decision-{index}",
+                source=decision.source,
+                title="Decision",
+                excerpt=decision.text,
+                confidence=decision.confidence,
+                section="assumptions",
+            )
+        )
+    for index, constraint in enumerate(context.constraints or []):
+        items.append(
+            EvidenceItem(
+                id=f"constraint-{index}",
+                source=constraint.source,
+                title="Constraint",
+                excerpt=constraint.text,
+                section="nfrs",
+            )
+        )
+    for index, snippet in enumerate(context.code_context or []):
+        items.append(
+            EvidenceItem(
+                id=f"code-{index}",
+                source="codebase",
+                title=f"Code: {snippet.file}",
+                excerpt=snippet.snippet,
+                section="dependencies",
+            )
+        )
+    return items
+
+
+def _build_field_references(evidence_items: List[EvidenceItem]) -> Dict[str, List[str]]:
+    references: Dict[str, List[str]] = {}
+    for item in evidence_items:
+        section = item.section or "description"
+        references.setdefault(section, []).append(item.id)
+    return references
+
+
+def _build_context_graph(
+    evidence_items: List[EvidenceItem],
+    field_references: Dict[str, List[str]],
+    story_id: str,
+) -> ContextGraphSnapshot:
+    nodes: List[ContextGraphNode] = []
+    edges: List[ContextGraphEdge] = []
+    story_node_id = f"story:{story_id}"
+    nodes.append(
+        ContextGraphNode(
+            id=story_node_id,
+            type="story",
+            label="Story Detail",
+        )
+    )
+    for section in field_references.keys():
+        section_id = f"story_section:{section}"
+        nodes.append(
+            ContextGraphNode(
+                id=section_id,
+                type="story_section",
+                label=section.replace("_", " ").title(),
+            )
+        )
+        edges.append(
+            ContextGraphEdge(
+                source=story_node_id,
+                target=section_id,
+                type="PART_OF",
+            )
+        )
+    for item in evidence_items:
+        source_id = f"source:{item.source}"
+        if not any(node.id == source_id for node in nodes):
+            nodes.append(
+                ContextGraphNode(
+                    id=source_id,
+                    type="source",
+                    label=item.source,
+                )
+            )
+        doc_id = f"document:{item.id}"
+        nodes.append(
+            ContextGraphNode(
+                id=doc_id,
+                type="document",
+                label=item.title,
+                metadata={"excerpt": item.excerpt or ""},
+            )
+        )
+        chunk_id = f"chunk:{item.id}"
+        nodes.append(
+            ContextGraphNode(
+                id=chunk_id,
+                type="chunk",
+                label=item.title,
+            )
+        )
+        edges.append(
+            ContextGraphEdge(
+                source=source_id,
+                target=doc_id,
+                type="SOURCE_OF",
+            )
+        )
+        edges.append(
+            ContextGraphEdge(
+                source=doc_id,
+                target=chunk_id,
+                type="PART_OF",
+            )
+        )
+        section_id = f"story_section:{item.section or 'description'}"
+        edges.append(
+            ContextGraphEdge(
+                source=chunk_id,
+                target=section_id,
+                type="SUPPORTS",
+            )
+        )
+    return ContextGraphSnapshot(nodes=nodes, edges=edges, story_id=story_id)
 
 
 def _core_artifact_from_story(state: StoryWritingState) -> CoreArtifact:
@@ -301,11 +585,22 @@ def _docs_to_knowledge_units(context: RetrievedContext) -> List[UASKnowledgeUnit
 
 
 def _doc_to_unit(doc: RetrievedDoc) -> UASKnowledgeUnit:
+    source_value = doc.source.lower()
+    if "jira" in source_value:
+        source = "jira"
+    elif "confluence" in source_value:
+        source = "confluence"
+    elif "notion" in source_value:
+        source = "notion"
+    elif "direct" in source_value:
+        source = "direct"
+    else:
+        source = "github"
     return UASKnowledgeUnit(
         id=doc.title,
         content=doc.excerpt,
         summary=doc.excerpt[:200],
-        source="notion" if "notion" in doc.source.lower() else "github",
+        source=source,
         last_updated="",
         topics=[],
         location=doc.source,

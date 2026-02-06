@@ -78,11 +78,12 @@ cp .env.example .env
 
 # Or create minimal .env file:
 cat > .env << EOF
-LITELLM_MODEL=gpt-4-turbo-preview
-OPENAI_API_KEY=your-api-key-here
+LITELLM_MODEL=ollama/llama3
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 DRY_RUN=true
 MODE=comment_only
 VECTOR_STORE_PATH=./data/lancedb
+EMBEDDING_MODEL=local/all-MiniLM-L6-v2
 EOF
 ```
 
@@ -113,10 +114,10 @@ poetry run python scripts/ingest_knowledge.py
 
 ### Scenario 1: Basic Demo (No External APIs)
 
-The demo script (`scripts/demo.py`) can run with just an OpenAI API key:
+The demo script (`scripts/demo.py`) can run with Ollama locally:
 
 ```bash
-# Set OPENAI_API_KEY in .env
+# Ensure Ollama is running and LITELLM_MODEL is set to an Ollama model
 poetry run python scripts/demo.py
 ```
 

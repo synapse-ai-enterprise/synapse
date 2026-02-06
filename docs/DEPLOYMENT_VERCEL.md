@@ -12,9 +12,9 @@ This project deploys the FastAPI backend as a Vercel serverless function and the
 
 Set these in Vercel Project Settings:
 
-- `OPENAI_API_KEY`
 - `LITELLM_MODEL` (example: `gpt-4o-mini`)
 - `EMBEDDING_MODEL` (example: `text-embedding-3-small`)
+- `OPENAI_API_KEY` (only if using OpenAI models)
 
 Optional if you use integrations:
 

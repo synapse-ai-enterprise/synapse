@@ -35,3 +35,7 @@ class CognitiveState(BaseModel):
     debate_history: List[Dict[str, Any]] = Field(default_factory=list)
     supervisor_decision: Optional[Dict[str, Any]] = Field(None, description="Latest supervisor routing decision")
     trace_id: Optional[str] = None  # For OpenTelemetry
+    proposed_artifacts: List[CoreArtifact] = Field(
+        default_factory=list,
+        description="Proposed split artifacts when story is too large (INVEST S violation)"
+    )

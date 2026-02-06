@@ -1,9 +1,24 @@
-"""Supervisor orchestrator for multi-agent debate."""
+"""Supervisor orchestrator for multi-agent debate.
+
+FIXES APPLIED (Feb 5, 2026):
+- Issue 3: Added error handling around LLM calls with structured logging
+- Issue 7: Added observability with structured logging and tracing
+- Prompt Library Integration: Now fetches prompts dynamically from the Prompt Library
+"""
 
 from typing import Dict, List
 
 from src.domain.interfaces import ILLMProvider
 from src.domain.schema import CoreArtifact, SupervisorDecision
+from src.infrastructure.prompt_library import get_prompt_library
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class AgentError(Exception):
+    """Exception raised when an agent operation fails."""
+    pass
 
 
 class SupervisorAgent:
@@ -13,7 +28,11 @@ class SupervisorAgent:
     and handles edge cases like agent disagreements or stagnation.
     """
 
-    SYSTEM_PROMPT = """You are a Supervisor Agent orchestrating a multi-agent debate workflow for Agile artifact optimization.
+    # Prompt ID for fetching from the library
+    PROMPT_ID = "supervisor_system"
+
+    # Default fallback prompt (used if prompt library fetch fails)
+    DEFAULT_SYSTEM_PROMPT = """You are a Supervisor Agent orchestrating a multi-agent debate workflow for Agile artifact optimization.
 
 Your role is to:
 1. Monitor debate progress across Product Owner, QA, and Developer agents
@@ -28,6 +47,7 @@ Available actions:
 - "synthesize": Route to Product Owner Agent to synthesize feedback
 - "validate": Route to validation node to check confidence and violations
 - "execute": Route to execution node to update the issue tracker
+- "propose_split": Route to split proposal when story is TOO LARGE (INVEST "S" violation) or covers MULTIPLE distinct features/models
 - "end": Terminate the workflow (use only for critical failures)
 
 Workflow pattern:
@@ -42,6 +62,13 @@ Considerations:
 - If violations are increasing, route back to draft immediately
 - If max iterations reached, route to execute even if not perfect
 - If critical blocking issues found, consider ending early
+- **IMPORTANT - STORY SPLITTING:** If there are persistent "S" (Small) violations indicating the story is TOO LARGE, 
+  or the story covers MULTIPLE distinct features/models/entities that should be separate stories,
+  route to "propose_split" instead of continuing the debate loop. Signs to split:
+  * QA critique mentions "too large", "multiple features", "covers too much scope"
+  * Violation mentions "S:" criterion failures
+  * Story description mentions 3+ distinct models/entities (e.g., Order, Frame, Glasses)
+  * After 2+ iterations, "S" violations persist despite refinement attempts
 
 Be decisive but thoughtful. Your goal is efficient convergence to high-quality artifacts."""
 
@@ -52,6 +79,36 @@ Be decisive but thoughtful. Your goal is efficient convergence to high-quality a
             llm_provider: LLM provider for making routing decisions.
         """
         self.llm_provider = llm_provider
+        self._prompt_library = get_prompt_library()
+
+    async def _get_system_prompt(self) -> str:
+        """Fetch system prompt from the Prompt Library with fallback.
+        
+        Returns:
+            The system prompt template string.
+        """
+        try:
+            template = await self._prompt_library.get_prompt_template(self.PROMPT_ID)
+            if template:
+                logger.debug(
+                    "supervisor.prompt_loaded",
+                    prompt_id=self.PROMPT_ID,
+                    source="prompt_library",
+                )
+                return template
+        except Exception as e:
+            logger.warning(
+                "supervisor.prompt_load_failed",
+                prompt_id=self.PROMPT_ID,
+                error=str(e),
+            )
+        
+        logger.debug(
+            "supervisor.prompt_loaded",
+            prompt_id=self.PROMPT_ID,
+            source="fallback",
+        )
+        return self.DEFAULT_SYSTEM_PROMPT
 
     async def decide_next_action(
         self,
@@ -81,6 +138,12 @@ Be decisive but thoughtful. Your goal is efficient convergence to high-quality a
         # Count violations (both string and structured)
         violation_count = len(violations) + len(structured_violations)
         
+        # Check for "S" (Small) violations specifically - indicates story too large
+        has_small_violation = any(
+            ("S:" in str(v) or "Small" in str(v) or "too large" in str(v).lower())
+            for v in (violations + [sv.get("description", "") if isinstance(sv, dict) else str(sv) for sv in structured_violations])
+        )
+        
         # Analyze debate history for trends
         trend_analysis = self._analyze_trends(debate_history)
         
@@ -95,10 +158,14 @@ Be decisive but thoughtful. Your goal is efficient convergence to high-quality a
             qa_assessment=qa_assessment,
             trend_analysis=trend_analysis,
             max_iterations=max_iterations,
+            has_small_violation=has_small_violation,
         )
         
+        # Fetch prompt from library with fallback
+        system_prompt = await self._get_system_prompt()
+        
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": f"""Analyze the current debate state and decide the next action:
@@ -125,6 +192,9 @@ Consider:
 - If validation shows low confidence/violations and iterations < max, route to "draft"
 - If validation shows high confidence and no violations, route to "execute"
 - If max iterations reached, route to "execute" regardless
+- **SPLIT DECISION:** If "S" (Small) violations persist after 1+ iterations, OR the story covers 
+  multiple distinct features/models, route to "propose_split" instead of continuing refinement.
+  This is the RIGHT choice when the story scope is fundamentally too large to fix with rewording.
 
 Return a JSON object with:
 - "next_action": one of the action literals
@@ -135,14 +205,73 @@ Return a JSON object with:
             },
         ]
         
-        # Use structured output
-        decision = await self.llm_provider.structured_completion(
-            messages=messages,
-            response_model=SupervisorDecision,
-            temperature=0.3,  # Lower temperature for more consistent routing
+        # FIX Issue 3: Add error handling with retries
+        # FIX Issue 7: Add observability logging
+        logger.info(
+            "supervisor.decide_next_action.start",
+            iteration_count=iteration_count,
+            max_iterations=max_iterations,
+            violation_count=violation_count,
+            has_small_violation=has_small_violation,
         )
         
-        return decision
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Use structured output
+                decision = await self.llm_provider.structured_completion(
+                    messages=messages,
+                    response_model=SupervisorDecision,
+                    temperature=0.3,  # Lower temperature for more consistent routing
+                )
+                
+                logger.info(
+                    "supervisor.decide_next_action.complete",
+                    next_action=decision.next_action,
+                    should_continue=decision.should_continue,
+                    confidence=decision.confidence,
+                    attempt=attempt + 1,
+                )
+                
+                return decision
+                
+            except TimeoutError as e:
+                last_error = e
+                logger.warning(
+                    "supervisor.decide_next_action.timeout",
+                    attempt=attempt + 1,
+                )
+                if attempt < max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    "supervisor.decide_next_action.error",
+                    error=str(e),
+                    attempt=attempt + 1,
+                )
+                if attempt < max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+        
+        # Fallback: If all retries fail, return a safe default decision
+        logger.error(
+            "supervisor.decide_next_action.failed_fallback",
+            error=str(last_error),
+            fallback_action="execute",
+        )
+        
+        # Return a fallback decision to prevent workflow crash
+        return SupervisorDecision(
+            next_action="execute",
+            reasoning=f"Fallback decision due to LLM error: {last_error}",
+            should_continue=False,
+            priority_focus="none",
+            confidence=0.5,
+        )
 
     def _analyze_trends(self, debate_history: List[Dict]) -> Dict[str, any]:
         """Analyze trends in debate history.
@@ -197,6 +326,7 @@ Return a JSON object with:
         qa_assessment: str | None,
         trend_analysis: Dict,
         max_iterations: int,
+        has_small_violation: bool = False,
     ) -> str:
         """Build context string for decision making.
 
@@ -210,6 +340,7 @@ Return a JSON object with:
             qa_assessment: QA overall assessment.
             trend_analysis: Trend analysis dictionary.
             max_iterations: Maximum iterations allowed.
+            has_small_violation: Whether "S" (Small) violations exist.
 
         Returns:
             Formatted context string.
@@ -219,6 +350,10 @@ Return a JSON object with:
             f"- Overall Confidence: {confidence_score:.2f}",
             f"- INVEST Violations: {violation_count}",
         ]
+        
+        # Highlight "S" violations - important for split decision
+        if has_small_violation:
+            lines.append("- ⚠️ **SMALL VIOLATION DETECTED**: Story may be TOO LARGE - consider 'propose_split'")
         
         if qa_confidence is not None:
             lines.append(f"- QA Agent Confidence: {qa_confidence:.2f}")

@@ -61,11 +61,12 @@ async def context_assembly_node(
     # Search for relevant context
     query = f"{state.current_artifact.title} {state.current_artifact.description}"
     
-    # Search both GitHub and Notion
-    github_context = await knowledge_base.search(query, source="github", limit=5)
-    notion_context = await knowledge_base.search(query, source="notion", limit=5)
-    
-    state.retrieved_context = github_context + notion_context
+    # Search across configured knowledge sources
+    sources = ["github", "notion", "jira", "confluence"]
+    retrieved: List = []
+    for source in sources:
+        retrieved.extend(await knowledge_base.search(query, source=source, limit=5))
+    state.retrieved_context = retrieved
     
     return _state_to_dict(state)
 
@@ -91,9 +92,22 @@ async def drafting_node(
     if not artifact_to_draft:
         return state_dict
 
+    # Build feedback summary for re-drafts (when we have refined_artifact and critiques)
+    feedback_summary = None
+    if state.refined_artifact and (state.qa_critique or state.developer_critique):
+        parts = []
+        if state.qa_critique:
+            parts.append(f"QA: {state.qa_critique[:800]}{'...' if len(state.qa_critique) > 800 else ''}")
+        if state.developer_critique:
+            parts.append(f"Developer: {state.developer_critique[:600]}{'...' if len(state.developer_critique) > 600 else ''}")
+        if state.invest_violations:
+            parts.append("INVEST violations to fix: " + "; ".join(str(v) for v in state.invest_violations[:10]))
+        feedback_summary = "\n".join(parts)
+
     draft = await po_agent.draft_artifact(
         artifact_to_draft,
         state.retrieved_context,
+        feedback_summary=feedback_summary,
     )
 
     state.draft_artifact = draft
@@ -450,7 +464,10 @@ async def execution_node(
     state_dict: Dict[str, Any],
     issue_tracker: IIssueTracker,
 ) -> Dict[str, Any]:
-    """Execution node: Update Linear via adapter.
+    """Execution node: Update Linear via adapter (single artifact path).
+
+    When state has proposed_artifacts, the outcome is a multi-artifact proposal
+    and we do not update the original issue; the proposal is consumed by the caller.
 
     Args:
         state_dict: Current cognitive state dictionary.
@@ -460,8 +477,10 @@ async def execution_node(
         Updated state dictionary.
     """
     state = _state_from_dict(state_dict)
-    if not state.refined_artifact:
-        return state_dict
+    
+    # If split proposal exists, don't update original - return the proposals
+    if state.proposed_artifacts:
+        return _state_to_dict(state)
 
     # Use refined artifact if available, otherwise use draft
     artifact_to_update = state.refined_artifact or state.draft_artifact
@@ -475,6 +494,51 @@ async def execution_node(
     )
 
     return {"execution_success": success, **_state_to_dict(state)}
+
+
+async def split_proposal_node(
+    state_dict: Dict[str, Any],
+    po_agent: ProductOwnerAgent,
+) -> Dict[str, Any]:
+    """Propose splitting the current artifact into multiple smaller artifacts.
+
+    Used when the debate concludes the story is too large (INVEST S) or covers
+    multiple distinct features; the result is a proposal for N artifacts that
+    together preserve original scope. Uses the ORIGINAL artifact (from ingress)
+    so the split preserves full scope.
+
+    Args:
+        state_dict: Current cognitive state dictionary.
+        po_agent: Product Owner agent.
+
+    Returns:
+        Updated state dictionary with proposed_artifacts.
+    """
+    state = _state_from_dict(state_dict)
+    # Use original artifact so split preserves full scope (Order + Frame + Glasses);
+    # refined_artifact may have been narrowed to Order-only by synthesis.
+    artifact = state.current_artifact or state.refined_artifact or state.draft_artifact
+    if not artifact:
+        return state_dict
+
+    violations_summary: List[str] = []
+    for v in state.structured_qa_violations:
+        if hasattr(v, "criterion") and hasattr(v, "description"):
+            violations_summary.append(f"{v.criterion}: {v.description}")
+        elif isinstance(v, dict):
+            violations_summary.append(
+                f"{v.get('criterion', '?')}: {v.get('description', '')}"
+            )
+    if not violations_summary and state.invest_violations:
+        violations_summary = list(state.invest_violations)
+
+    proposed = await po_agent.propose_artifact_split(
+        artifact,
+        qa_critique=state.qa_critique,
+        violations_summary=violations_summary or None,
+    )
+    state.proposed_artifacts = proposed
+    return _state_to_dict(state)
 
 
 async def supervisor_node(

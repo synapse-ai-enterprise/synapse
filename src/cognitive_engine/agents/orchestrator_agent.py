@@ -20,6 +20,11 @@ class OrchestratorAgent:
         request = StoryWritingRequest(**state["request"])
 
         if request.flow == "epic_to_stories":
+            if not request.epic_text:
+                return OrchestratorDecision(
+                    next_action="end",
+                    reasoning="Epic text missing; cannot generate stories.",
+                )
             if not state.get("epic_analysis"):
                 return OrchestratorDecision(
                     next_action="epic_analysis",
@@ -31,6 +36,11 @@ class OrchestratorAgent:
                     reasoning="Generate splitting strategy recommendations after epic analysis.",
                 )
             if not state.get("generated_stories"):
+                if state.get("metadata", {}).get("story_generation_complete"):
+                    return OrchestratorDecision(
+                        next_action="end",
+                        reasoning="Story generation completed with no results.",
+                    )
                 return OrchestratorDecision(
                     next_action="story_generation",
                     reasoning="Generate candidate stories from selected techniques.",
@@ -41,12 +51,22 @@ class OrchestratorAgent:
             )
 
         if request.flow == "story_to_detail":
+            if not request.story_text:
+                return OrchestratorDecision(
+                    next_action="end",
+                    reasoning="Story text missing; cannot detail story.",
+                )
             if not state.get("template_schema"):
                 return OrchestratorDecision(
                     next_action="template_parser",
                     reasoning="Parse story template before detailing.",
                 )
             if not state.get("retrieved_context"):
+                if state.get("metadata", {}).get("knowledge_retrieval_skipped"):
+                    return OrchestratorDecision(
+                        next_action="end",
+                        reasoning="Knowledge retrieval skipped due to missing story text.",
+                    )
                 return OrchestratorDecision(
                     next_action="knowledge_retrieval",
                     reasoning="Gather context before writing story details.",
@@ -67,9 +87,18 @@ class OrchestratorAgent:
                     next_action="critique_loop",
                     reasoning="Run critique loop after validation to refine story quality.",
                 )
+
+            # Always generate split proposals after critique to provide splitting options
+            split_completed = state.get("metadata", {}).get("split_completed")
+            if critique_complete and not split_completed:
+                return OrchestratorDecision(
+                    next_action="split_proposal",
+                    reasoning="Generate split proposals for story after critique loop.",
+                )
+
             return OrchestratorDecision(
                 next_action="end",
-                reasoning="Module 2 complete with validated story.",
+                reasoning="Module 2 complete with validated story and split proposals.",
             )
 
         return OrchestratorDecision(

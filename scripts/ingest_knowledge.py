@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import settings
 from src.domain.schema import UASKnowledgeUnit
 from src.infrastructure.di import get_container
+from src.ingestion.confluence_loader import load_confluence_pages
 from src.ingestion.github_loader import load_repository
+from src.ingestion.jira_loader import load_jira_issues
 from src.ingestion.notion_loader import load_notion_pages
 from src.utils.logger import get_logger, setup_logging
 
@@ -59,6 +61,30 @@ async def ingest_knowledge() -> None:
             logger.info("notion_ingestion_complete", count=len(notion_docs))
         except Exception as e:
             logger.error("notion_ingestion_error", error=str(e))
+
+    # Ingest Jira issues
+    jira_keys = [key.strip() for key in settings.jira_project_keys.split(",") if key.strip()]
+    if jira_keys:
+        try:
+            logger.info("ingesting_jira", projects=jira_keys)
+            jira_docs = await load_jira_issues(jira_keys)
+            all_documents.extend(jira_docs)
+            logger.info("jira_ingestion_complete", count=len(jira_docs))
+        except Exception as e:
+            logger.error("jira_ingestion_error", error=str(e))
+
+    # Ingest Confluence pages
+    confluence_spaces = [
+        key.strip() for key in settings.confluence_space_keys.split(",") if key.strip()
+    ]
+    if confluence_spaces:
+        try:
+            logger.info("ingesting_confluence", spaces=confluence_spaces)
+            confluence_docs = await load_confluence_pages(confluence_spaces)
+            all_documents.extend(confluence_docs)
+            logger.info("confluence_ingestion_complete", count=len(confluence_docs))
+        except Exception as e:
+            logger.error("confluence_ingestion_error", error=str(e))
 
     # Add documents to knowledge base
     if all_documents:

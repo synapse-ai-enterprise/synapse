@@ -99,6 +99,15 @@ Goal: searchable knowledge with policy enforcement.
 - Hybrid retrieval: vector + keyword + metadata filters.
 - Optional graph store for relational knowledge (GraphRAG).
 
+### Knowledge/Context Graph
+
+Goal: increase context quality and explainability with explicit relationships.
+- Graph nodes: Source, Document, Chunk, Entity, Story, StorySection, Decision.
+- Graph edges: SOURCE_OF, PART_OF, MENTIONS, DERIVED_FROM, SUPPORTS, CONFLICTS_WITH.
+- Graph queries enable multi-hop reasoning, conflict detection, and provenance.
+- Every response should include traceable citations to graph nodes.
+ - Start with a per-run Context Graph snapshot (GraphRAG-lite) and evolve to a persistent graph store.
+
 ### Guardrails
 
 Goal: enterprise safety before and after generation.
