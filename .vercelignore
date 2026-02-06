@@ -1,0 +1,2 @@
+# Exclude docs from Vercel build and deployment
+docs/
