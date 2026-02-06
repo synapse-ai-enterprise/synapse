@@ -231,6 +231,10 @@ class InMemoryKnowledgeBase(IKnowledgeBase):
         self.embedding_fn = embedding_fn
         self._documents: list[dict] = []
 
+    async def initialize_db(self) -> None:
+        """No-op for in-memory backend; required by sync_integration and other callers."""
+        pass
+
     async def search(
         self,
         query: str,
