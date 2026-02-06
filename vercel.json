@@ -2,21 +2,15 @@
   "version": 2,
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" },
-    {
-      "src": "ui/package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
-    }
+    { "src": "ui/package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "functions": {
-    "api/index.py": {
-      "maxDuration": 30
-    }
+    "api/index.py": { "maxDuration": 30 }
   },
   "routes": [
     { "src": "/api/(.*)", "dest": "api/index.py" },
-    { "src": "/assets/(.*)", "dest": "/ui/assets/$1" },
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/ui/index.html" }
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
