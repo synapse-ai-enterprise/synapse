@@ -1,2 +1,2 @@
-# Exclude docs from Vercel build and deployment
-docs/
+# Exclude docs from upload and deployment (Vercel docs: no trailing slash)
+docs

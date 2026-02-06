@@ -51,6 +51,16 @@ Both scripts:
 - start the UI on `http://localhost:5173`
 - write logs to `.backend.log` and `.frontend.log`
 
+**If you see "Is the backend running?"**  
+The UI expects the API at `http://localhost:8000`. Start the backend in a separate terminal:
+
+```bash
+# From repo root, with .env / .env.local loaded:
+poetry run python -m src.main
+```
+
+Or use the script that starts both backend and frontend: `./scripts/start_local_ui_backend.sh`.
+
 **Environment files:**
 - `.env` is loaded by default
 - `.env.local` is also supported (recommended for local secrets)

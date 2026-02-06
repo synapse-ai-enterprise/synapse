@@ -2,6 +2,18 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL ||
   (import.meta.env.DEV ? "http://localhost:8000" : "");
 
+/**
+ * Parse API error body (e.g. FastAPI {"detail": "..."}) for user-facing messages.
+ */
+const getErrorMessage = async (response) => {
+  const text = await response.text();
+  try {
+    const json = JSON.parse(text);
+    if (json.detail) return typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail);
+  } catch (_) {}
+  return text || `Request failed: ${response.status}`;
+};
+
 const requestJson = async (path, options = {}) => {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -9,8 +21,10 @@ const requestJson = async (path, options = {}) => {
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed: ${response.status}`);
+    const message = await getErrorMessage(response);
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
   }
 
   return response.json();

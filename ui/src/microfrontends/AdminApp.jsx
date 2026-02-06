@@ -253,10 +253,18 @@ export function AdminApp({
         setHasModelChanges(false);
       } catch (error) {
         console.error("Failed to load models configuration", error);
-        // Set a fallback error message
+        const isNetworkError =
+          error?.message === "Failed to fetch" ||
+          error?.name === "TypeError" ||
+          (error?.message && error.message.includes("NetworkError"));
+        const hint = import.meta.env.DEV
+          ? " Start the backend (e.g. ./scripts/start_local_ui_backend.sh or poetry run python -m src.main) so the API runs at http://localhost:8000."
+          : " Check that the API is deployed and reachable.";
         setModelSaveMessage({
           type: "error",
-          text: "Failed to load models. Is the backend running?",
+          text: isNetworkError
+            ? `Cannot reach the API. Is the backend running?${hint}`
+            : `Failed to load models: ${error?.message || "Unknown error"}.`,
         });
       } finally {
         if (isMounted) {
@@ -426,7 +434,10 @@ export function AdminApp({
       await testIntegration(integration.name);
     } catch (error) {
       console.warn("Integration action failed", error);
-      window.alert(`Action failed for ${integration.name}. Please check your configuration and try again.`);
+      const msg = error?.message && !error.message.startsWith("Request failed")
+        ? error.message
+        : `Action failed for ${integration.name}. Please check your configuration and try again.`;
+      window.alert(msg);
     } finally {
       setActionLoading(integration.name, "main", false);
     }
@@ -444,7 +455,10 @@ export function AdminApp({
       }
     } catch (error) {
       console.warn("Integration test failed", error);
-      window.alert(`Connection test failed for ${integration.name}. Please check your API credentials and try again.`);
+      const msg = error?.message && !error.message.startsWith("Request failed")
+        ? error.message
+        : `Connection test failed for ${integration.name}. Please check your API credentials and try again.`;
+      window.alert(msg);
     } finally {
       setActionLoading(integration.name, "test", false);
     }
@@ -482,7 +496,10 @@ export function AdminApp({
       }
     } catch (error) {
       console.warn("Integration footer action failed", error);
-      window.alert(`${action.label} failed for ${integration.name}. Please check your configuration and try again.`);
+      const msg = error?.message && !error.message.startsWith("Request failed")
+        ? error.message
+        : `${action.label} failed for ${integration.name}. Please check your configuration and try again.`;
+      window.alert(msg);
     } finally {
       setActionLoading(integration.name, actionType, false);
     }

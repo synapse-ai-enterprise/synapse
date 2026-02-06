@@ -315,4 +315,6 @@ Documents:
         for constraint in context.constraints or []:
             source_value = (constraint.source or "").strip().lower()
             if not source_value or source_value in {"unknown", "n/a"}:
-                constraint.source = "derived"        return context
+                constraint.source = "derived"
+
+        return context
